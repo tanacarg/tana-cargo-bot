@@ -9,6 +9,8 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", "10000"))
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,6 +72,9 @@ def main():
     if not TOKEN:
         raise ValueError("BOT_TOKEN is not set")
 
+    if not RENDER_URL:
+        raise ValueError("RENDER_EXTERNAL_URL is not set")
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -77,8 +82,19 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
-    print("Tana Cargo Bot is starting...")
-    app.run_polling()
+    webhook_url = f"{RENDER_URL}/telegram"
+
+    print("Tana Cargo Bot is starting with webhook...")
+    print(f"Webhook URL: {webhook_url}")
+    print(f"Listening on port: {PORT}")
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="telegram",
+        webhook_url=webhook_url,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
