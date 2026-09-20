@@ -1,11 +1,17 @@
 import os
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     ConversationHandler,
+    CallbackQueryHandler,
     filters,
 )
 
@@ -13,14 +19,35 @@ TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", "10000"))
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
+SUPPORT_PHONE = "0960011010"
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
+
 users = {}
 cargo_posts = []
 truck_posts = []
+connection_requests = []
 
-CARGO_FROM, CARGO_TO, CARGO_TYPE, CARGO_WEIGHT, CARGO_DATE, CARGO_PHONE = range(6)
-TRUCK_TYPE, TRUCK_PLATE, TRUCK_CAPACITY, TRUCK_FROM, TRUCK_TO, TRUCK_PHONE = range(6, 12)
-OWNER_NAME, OWNER_PHONE = range(12, 14)
-SUPPORT_MESSAGE = 14
+(
+    CARGO_FROM,
+    CARGO_TO,
+    CARGO_TYPE,
+    CARGO_SIZE,
+    CARGO_WEIGHT,
+    CARGO_DATE,
+    CARGO_PHONE,
+) = range(7)
+
+(
+    TRUCK_TYPE,
+    TRUCK_PLATE,
+    TRUCK_CAPACITY,
+    TRUCK_FROM,
+    TRUCK_ROUTE,
+    TRUCK_PHONE,
+) = range(7, 13)
+
+OWNER_NAME, OWNER_PHONE = range(13, 15)
+SUPPORT_MESSAGE = 15
 
 
 def main_menu():
@@ -31,6 +58,58 @@ def main_menu():
         ["ℹ️ About"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def size_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("🟢 ሙሉ ጭነት 100%", callback_data="size_100"),
+        ],
+        [
+            InlineKeyboardButton("🟡 ግማሽ ጭነት 50%", callback_data="size_50"),
+        ],
+        [
+            InlineKeyboardButton("🟠 እሩብ ጭነት 25%", callback_data="size_25"),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def normalize(text):
+    return text.strip().lower().replace(" ", "")
+
+
+def route_points(text):
+    separators = [",", "→", ">", "/", "፣"]
+    for sep in separators:
+        text = text.replace(sep, ",")
+    return [normalize(x) for x in text.split(",") if x.strip()]
+
+
+def route_match(truck_from, truck_route, cargo_from, cargo_to):
+    truck_start = normalize(truck_from)
+    cargo_start = normalize(cargo_from)
+    cargo_end = normalize(cargo_to)
+
+    points = [truck_start] + route_points(truck_route)
+
+    if cargo_start not in points or cargo_end not in points:
+        return False
+
+    start_index = points.index(cargo_start)
+    end_index = points.index(cargo_end)
+
+    return start_index < end_index
+
+
+def commission_rate(size):
+    if size == 100:
+        return 0.01
+    if size == 50:
+        return 0.015
+    if size == 25:
+        return 0.02
+    return 0.01
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -87,7 +166,31 @@ async def cargo_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["cargo"]["type"] = update.message.text
 
     await update.message.reply_text(
-        "4️⃣ የጭነቱን ክብደት ይጻፉ።\n"
+        "4️⃣ የጭነቱን መጠን ይምረጡ።",
+        reply_markup=size_keyboard(),
+    )
+
+    return CARGO_SIZE
+
+
+async def cargo_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    sizes = {
+        "size_100": (100, "ሙሉ ጭነት"),
+        "size_50": (50, "ግማሽ ጭነት"),
+        "size_25": (25, "እሩብ ጭነት"),
+    }
+
+    size, size_name = sizes[query.data]
+
+    context.user_data["cargo"]["size"] = size
+    context.user_data["cargo"]["size_name"] = size_name
+
+    await query.edit_message_text(
+        f"📦 የተመረጠው፦ {size_name} ({size}%)\n\n"
+        "5️⃣ የጭነቱን ክብደት ይጻፉ።\n"
         "ምሳሌ፦ 10 ቶን"
     )
 
@@ -98,7 +201,7 @@ async def cargo_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["cargo"]["weight"] = update.message.text
 
     await update.message.reply_text(
-        "5️⃣ የሚጫንበትን ቀን ይጻፉ።\n"
+        "6️⃣ የሚጫንበትን ቀን ይጻፉ።\n"
         "ምሳሌ፦ 25/09/2026"
     )
 
@@ -109,7 +212,7 @@ async def cargo_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["cargo"]["date"] = update.message.text
 
     await update.message.reply_text(
-        "6️⃣ ስልክ ቁጥር ይጻፉ።"
+        "7️⃣ ስልክ ቁጥር ይጻፉ።"
     )
 
     return CARGO_PHONE
@@ -128,9 +231,10 @@ async def cargo_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 መነሻ፦ {cargo['from']}\n"
         f"📍 መድረሻ፦ {cargo['to']}\n"
         f"📦 አይነት፦ {cargo['type']}\n"
+        f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n"
         f"⚖️ ክብደት፦ {cargo['weight']}\n"
-        f"📅 ቀን፦ {cargo['date']}\n"
-        f"📞 ስልክ፦ {cargo['phone']}",
+        f"📅 ቀን፦ {cargo['date']}\n\n"
+        "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።",
         reply_markup=main_menu(),
     )
 
@@ -140,27 +244,86 @@ async def cargo_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def find_cargo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not cargo_posts:
         await update.message.reply_text(
-            "🔎 በአሁኑ ጊዜ የተለጠፈ ጭነት የለም።",
+            "📦 በአሁኑ ጊዜ ተስማሚ ጭነት የለም።\n\n"
+            "🔎 ጭነት እያፈላለግን ነው።\n"
+            "🔔 ተስማሚ ጭነት ሲገኝ እናሳውቅዎታለን።",
             reply_markup=main_menu(),
         )
         return
 
     message = "🔎 የተለጠፉ ጭነቶች፦\n\n"
+    buttons = []
 
     for i, cargo in enumerate(cargo_posts, 1):
         message += (
-            f"🚚 ጭነት #{i}\n"
+            f"📦 ጭነት #{i}\n"
             f"📍 {cargo['from']} ➡️ {cargo['to']}\n"
             f"📦 {cargo['type']}\n"
+            f"📊 {cargo['size_name']} ({cargo['size']}%)\n"
             f"⚖️ {cargo['weight']}\n"
             f"📅 {cargo['date']}\n"
-            f"📞 {cargo['phone']}\n\n"
+            "🔒 የባለቤቱ ስልክ ተደብቋል።\n\n"
+        )
+
+        buttons.append(
+            [InlineKeyboardButton(
+                f"🤝 ግንኙነት ጠይቅ #{i}",
+                callback_data=f"connect_{i-1}"
+            )]
         )
 
     await update.message.reply_text(
         message,
-        reply_markup=main_menu(),
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
+
+
+async def connection_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    index = int(query.data.split("_")[1])
+
+    if index >= len(cargo_posts):
+        await query.edit_message_text(
+            "❌ ይህ ጭነት ከአሁን በኋላ አይገኝም።"
+        )
+        return
+
+    cargo = cargo_posts[index]
+    requester = update.effective_user
+
+    request = {
+        "cargo_index": index,
+        "cargo_owner_id": cargo["user_id"],
+        "requester_id": requester.id,
+        "requester_name": requester.full_name,
+        "status": "pending",
+    }
+
+    connection_requests.append(request)
+
+    await query.edit_message_text(
+        "✅ የግንኙነት ጥያቄዎ ተቀብለናል።\n\n"
+        "🤝 TANA CARGO የሁለቱን ወገኖች ግንኙነት ያስተካክላል።\n"
+        "🔒 የግል ስልክ ቁጥሮች እስከ ፍቃድ/ማረጋገጫ ድረስ ይደበቃሉ።"
+    )
+
+    if ADMIN_USER_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=int(ADMIN_USER_ID),
+                text=(
+                    "🔔 አዲስ የግንኙነት ጥያቄ\n\n"
+                    f"📦 {cargo['from']} ➡️ {cargo['to']}\n"
+                    f"📦 {cargo['type']}\n"
+                    f"📊 {cargo['size_name']}\n"
+                    f"👤 ጠያቂ፦ {requester.full_name}\n"
+                    f"🆔 ID፦ {requester.id}"
+                ),
+            )
+        except Exception:
+            pass
 
 
 async def truck_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,7 +353,7 @@ async def truck_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "3️⃣ የመጫን አቅሙን ይጻፉ።\n"
-        "ምሳሌ፦ 10 ቶን"
+        "ምሳሌ፦ 30 ቶን"
     )
 
     return TRUCK_CAPACITY
@@ -210,14 +373,17 @@ async def truck_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["truck"]["from"] = update.message.text
 
     await update.message.reply_text(
-        "5️⃣ የሚሄድበትን ቦታ ይጻፉ።"
+        "5️⃣ የሚሄድበትን መንገድ ይጻፉ።\n\n"
+        "ምሳሌ፦\n"
+        "ዳንግላ, ደብረ ማርቆስ, አዲስ አበባ, አዳማ\n\n"
+        "👉 መንገድ ላይ ያሉ ዋና ከተሞችን በኮማ (,) ይለያዩ።"
     )
 
-    return TRUCK_TO
+    return TRUCK_ROUTE
 
 
-async def truck_to(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["truck"]["to"] = update.message.text
+async def truck_route(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["truck"]["route"] = update.message.text
 
     await update.message.reply_text(
         "6️⃣ የስልክ ቁጥር ይጻፉ።"
@@ -237,11 +403,10 @@ async def truck_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ መኪናዎ በትክክል ተመዝግቧል!\n\n"
         f"🚛 አይነት፦ {truck['type']}\n"
-        f"🔢 ታርጋ፦ {truck['plate']}\n"
         f"⚖️ አቅም፦ {truck['capacity']}\n"
         f"📍 መነሻ፦ {truck['from']}\n"
-        f"📍 መድረሻ፦ {truck['to']}\n"
-        f"📞 ስልክ፦ {truck['phone']}",
+        f"🛣️ መንገድ፦ {truck['route']}\n\n"
+        "🔒 ታርጋና ስልክ ቁጥር ለሌሎች ተጠቃሚዎች አይታይም።",
         reply_markup=main_menu(),
     )
 
@@ -278,9 +443,7 @@ async def owner_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users[update.effective_user.id]["owner"] = owner.copy()
 
     await update.message.reply_text(
-        "✅ የጭነት ባለቤት ምዝገባዎ ተጠናቋል!\n\n"
-        f"👤 ስም፦ {owner['name']}\n"
-        f"📞 ስልክ፦ {owner['phone']}",
+        "✅ የጭነት ባለቤት ምዝገባዎ ተጠናቋል!",
         reply_markup=main_menu(),
     )
 
@@ -306,10 +469,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if "owner" in user:
-        message += (
-            f"\n📦 የጭነት ባለቤት\n"
-            f"📞 {user['owner']['phone']}\n"
-        )
+        message += "\n📦 የጭነት ባለቤት ምዝገባ አለ።"
 
     await update.message.reply_text(
         message,
@@ -320,166 +480,19 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📞 TANA CARGO Support\n\n"
-        "እባክዎ ጥያቄዎን ወይም ችግርዎን ይጻፉ።"
+        "ችግር ወይም ጥያቄ ካለዎት ይደውሉ፦\n\n"
+        f"📞 {SUPPORT_PHONE}\n\n"
+        "ወይም መልዕክትዎን ከታች ይጻፉ።"
     )
 
     return SUPPORT_MESSAGE
 
 
 async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "✅ መልዕክትዎ ተቀብለናል።\n"
-        "የSupport ቡድናችን በቅርቡ ያገኝዎታል።",
-        reply_markup=main_menu(),
-    )
-
-    return ConversationHandler.END
-
-
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "ℹ️ TANA CARGO\n\n"
-        "TANA CARGO የጭነት ባለቤቶችንና "
-        "የመኪና ባለቤቶችን ለማገናኘት የተዘጋጀ አገልግሎት ነው።\n\n"
-        "🚚 ጭነት ይለጥፉ\n"
-        "🔎 ጭነት ይፈልጉ\n"
-        "🚛 መኪና ያስመዝግቡ\n"
-        "📦 የጭነት ባለቤት ይመዝገቡ",
-        reply_markup=main_menu(),
-    )
-
-
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    if text == "🚚 ጭነት መለጠፍ":
-        return await cargo_start(update, context)
-
-    if text == "🔎 ጭነት መፈለግ":
-        return await find_cargo(update, context)
-
-    if text == "🚛 መኪና ማስመዝገብ":
-        return await truck_start(update, context)
-
-    if text == "📦 የጭነት ባለቤት":
-        return await owner_start(update, context)
-
-    if text == "👤 My Profile":
-        return await profile(update, context)
-
-    if text == "📞 Support":
-        return await support_start(update, context)
-
-    if text == "ℹ️ About":
-        return await about(update, context)
-
-    await update.message.reply_text(
-        "እባክዎ ከምናሌው ይምረጡ።",
-        reply_markup=main_menu(),
-    )
-
-
-def main():
-    if not TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set")
-
-    app = Application.builder().token(TOKEN).build()
-
-    cargo_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(
-                filters.Regex("^🚚 ጭነት መለጠፍ$"),
-                cargo_start,
-            )
-        ],
-        states={
-            CARGO_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from)],
-            CARGO_TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to)],
-            CARGO_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type)],
-            CARGO_WEIGHT: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight)],
-            CARGO_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date)],
-            CARGO_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone)],
-        },
-        fallbacks=[],
-    )
-
-    truck_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(
-                filters.Regex("^🚛 መኪና ማስመዝገብ$"),
-                truck_start,
-            )
-        ],
-        states={
-            TRUCK_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type)],
-            TRUCK_PLATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate)],
-            TRUCK_CAPACITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity)],
-            TRUCK_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_from)],
-            TRUCK_TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_to)],
-            TRUCK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone)],
-        },
-        fallbacks=[],
-    )
-
-    owner_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(
-                filters.Regex("^📦 የጭነት ባለቤት$"),
-                owner_start,
-            )
-        ],
-        states={
-            OWNER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name)],
-            OWNER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_phone)],
-        },
-        fallbacks=[],
-    )
-
-    support_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(
-                filters.Regex("^📞 Support$"),
-                support_start,
-            )
-        ],
-        states={
-            SUPPORT_MESSAGE: [
-                MessageHandler(
-                    filters.TEXT & ~filters.COMMAND,
-                    support_message,
-                )
-            ],
-        },
-        fallbacks=[],
-    )
-
-    app.add_handler(CommandHandler("start", start))
-
-    app.add_handler(cargo_conv)
-    app.add_handler(truck_conv)
-    app.add_handler(owner_conv)
-    app.add_handler(support_conv)
-
-    app.add_handler(
-        MessageHandler(
-            filters.Regex("^(🔎 ጭነት መፈለግ|👤 My Profile|ℹ️ About)$"),
-            menu_handler,
-        )
-    )
-
-    if RENDER_URL:
-        webhook_url = RENDER_URL.rstrip("/") + "/telegram"
-
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path="telegram",
-            webhook_url=webhook_url,
-            drop_pending_updates=True,
-        )
-    else:
-        app.run_polling(drop_pending_updates=True)
-
-
-if __name__ == "__main__":
-    main()
+    if ADMIN_USER_ID:
+        try:
+            await context.bot.send_message(
+                chat_id=int(ADMIN_USER_ID),
+                text=(
+                    "🆘 TANA CARGO Support\n\n"
+                    f"👤 
