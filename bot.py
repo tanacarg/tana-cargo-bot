@@ -814,14 +814,53 @@ async def cargo_phone(
 ):
     cargo = context.user_data["cargo"]
     cargo["phone"] = update.message.text.strip()
-    cargo["price"] = None
-    cargo["price_status"] = "agreement"
+
+    await update.message.reply_text(
+        "9️⃣ የመጫኛ ዋጋ ይጻፉ።\n\n"
+        "💰 በብር ብቻ ያስገቡ።\n"
+        "ምሳሌ፦ 50000\n\n"
+        "ወይም 'በስምምነት' ብለው ይጻፉ።"
+    )
+
+    return CARGO_PRICE
+
+
+async def cargo_price(
+    update,
+    context
+):
+    raw = update.message.text.strip().replace(",", "").replace("ብር", "").strip()
+    cargo = context.user_data["cargo"]
+
+    if normalize(raw) in ["በስምምነት", "agreement", "negotiable", "none"]:
+        cargo["price"] = None
+        cargo["price_status"] = "agreement"
+    else:
+        try:
+            price = float(raw)
+        except ValueError:
+            await update.message.reply_text(
+                "❌ እባክዎ ዋጋውን ቁጥር ብቻ ይጻፉ።\n"
+                "ምሳሌ፦ 50000\n"
+                "ወይም 'በስምምነት' ይጻፉ።"
+            )
+            return CARGO_PRICE
+        if price <= 0:
+            await update.message.reply_text("❌ ዋጋው ከ0 በላይ መሆን አለበት።")
+            return CARGO_PRICE
+        cargo["price"] = price
+        cargo["price_status"] = "fixed"
+
     cargo["user_id"] = update.effective_user.id
     cargo["active"] = True
     cargo_posts.append(cargo.copy())
 
+    if cargo.get("price"):
+        price_line = f"💰 የመጫኛ ዋጋ፦ {cargo['price']:,.2f} ብር"
+    else:
+        price_line = "💰 የመጫኛ ዋጋ፦ በስምምነት"
+
     await update.message.reply_text(
-        "9️⃣ የመጫኛ ዋጋ፦ በስምምነት ነው።\n\n"
         "✅ ጭነትዎ በትክክል ተመዝግቧል!\n\n"
         f"📍 መነሻ፦ {cargo['from']}\n"
         f"📍 መድረሻ፦ {cargo['to']}\n"
@@ -830,12 +869,11 @@ async def cargo_phone(
         f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n"
         f"⚖️ ክብደት፦ {cargo['weight']}\n"
         f"📅 ቀን፦ {cargo['date']}\n"
-        "💰 የመጫኛ ዋጋ፦ በስምምነት\n\n"
+        f"{price_line}\n\n"
         "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።",
         reply_markup=main_menu()
     )
 
-    # Notify matching trucks. Route is intentionally not required.
     for truck in truck_posts:
         if not truck.get("active", True):
             continue
@@ -851,60 +889,7 @@ async def cargo_phone(
                         f"📊 {cargo['size_name']}\n"
                         f"⚖️ {cargo['weight']}\n"
                         f"📅 {cargo['date']}\n"
-                        "💰 የመጫኛ ዋጋ፦ በስምምነት\n\n"
-                        "🔎 ለማየት የጭነት መፈለግን ይጫኑ።"
-                    )
-                )
-            except Exception:
-                pass
-    return ConversationHandler.END
-
-
-async def cargo_price(
-    update,
-    context
-):
-    raw = update.message.text.strip().replace(",", "").replace("ብር", "").strip()
-    try:
-        price = float(raw)
-    except ValueError:
-        await update.message.reply_text("❌ እባክዎ ዋጋውን ቁጥር ብቻ ይጻፉ።\nምሳሌ፦ 50000")
-        return CARGO_PRICE
-    if price <= 0:
-        await update.message.reply_text("❌ ዋጋው ከ0 በላይ መሆን አለበት።")
-        return CARGO_PRICE
-    cargo = context.user_data["cargo"]
-    cargo["price"] = price
-    cargo["user_id"] = update.effective_user.id
-    cargo["active"] = True
-    cargo_posts.append(cargo.copy())
-    await update.message.reply_text(
-        "✅ ጭነትዎ በትክክል ተመዝግቧል!\n\n"
-        f"📍 መነሻ፦ {cargo['from']}\n"
-        f"📍 መድረሻ፦ {cargo['to']}\n"
-        f"📦 አይነት፦ {cargo['type']}\n"
-        f"🚛 የሚፈለገው መኪና፦ {cargo['vehicle']}\n"
-        f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n"
-        f"⚖️ ክብደት፦ {cargo['weight']}\n"
-        f"📅 ቀን፦ {cargo['date']}\n"
-        f"💰 የመጫኛ የመጨረሻ ዋጋ፦ {price:,.2f} ብር\n\n"
-        "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።",
-        reply_markup=main_menu()
-    )
-    for truck in truck_posts:
-        if vehicle_match(truck.get("type"), cargo.get("vehicle")):
-            try:
-                await context.bot.send_message(
-                    chat_id=truck["user_id"],
-                    text=(
-                        "🔔 ተስማሚ አዲስ ጭነት ተገኝቷል!\n\n"
-                        f"📍 {cargo['from']} ➡️ {cargo['to']}\n"
-                        f"📦 {cargo['type']}\n"
-                        f"🚛 የሚፈለገው፦ {cargo['vehicle']}\n"
-                        f"📊 {cargo['size_name']}\n"
-                        f"⚖️ {cargo['weight']}\n"
-                        f"📅 {cargo['date']}\n"
-                        f"💰 {price:,.2f} ብር\n\n"
+                        f"{price_line}\n\n"
                         "🔎 ለማየት የጭነት መፈለግን ይጫኑ።"
                     )
                 )
@@ -3743,13 +3728,23 @@ async def support_start(
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("💬 @tanacargosupport ክፈት", url=SUPPORT_URL)],
-        [InlineKeyboardButton("☎️ 0960011010 ይደውሉ", url="tel:" + SUPPORT_PHONE)],
     ])
 
     await update.message.reply_text(
-        "📞 TANA CARGO የጣና ጭነት እገዛ\n\n"
-        "ለእገዛ ለማግኘት @tanacargosupport ይጫኑ።\n"
-        "☎️ 0960011010",
+        "📞 TANA CARGO — የድጋፍ ማዕከል\n\n"
+        "🔹 ጥያቄ ካለዎት?\n"
+        "🔹 ችግር ካጋጠመዎት?\n"
+        "🔹 እርዳታ ከፈለጉ?\n\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "💬 በ Telegram ድጋፍ\n"
+        "👉 @tanacargosupport\n\n"
+        "☎️ በስልክ ድጋፍ\n"
+        f"👉 {SUPPORT_PHONE}\n\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "⏰ የሥራ ሰዓት፦\n"
+        "ሰኞ - ቅዳሜ\n"
+        "2:00 - 8:00 (ከሰዓት)\n\n"
+        "🙏 እኛን ስለመረጡ እናመሰግናለን!",
         reply_markup=buttons
     )
     return ConversationHandler.END
@@ -3778,8 +3773,6 @@ async def about(
         "የጭነት ማጓጓዣ ሂደትን ለማቀላጠፍ እና ቀላልና የተደራጀ አገልግሎት ለመስጠት የተዘጋጀ የጭነት ማገናኛ አገልግሎት ነው።\n\n"
         "🤝 ጭነት ያለዎት? ከተመዘገቡ የጭነት መኪናዎች ጋር ይገናኙ።\n\n"
         "🚛 የጭነት መኪና አለዎት? የሚፈልጉትን ጭነት ይፈልጉ።\n\n"
-        "📞 ለተጨማሪ እገዛ፦ @tanacargosupport\n"
-        "☎️ 0960011010\n\n"
         "❤️ TANA CARGO — ጭነትንና መኪናን እናገናኛለን።\n\n"
         "🙏 እኛን ስለመረጡ እናመሰግናለን።",
         reply_markup=main_menu()
