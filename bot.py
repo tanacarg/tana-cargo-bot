@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -46,7 +47,6 @@ ACCOUNT_NAME = "Melak Gebeyhu"
 
 # Timeout
 TIMEOUT_SECONDS = 300  # 5 minutes
-ADMIN_TIMEOUT = 900  # 15 minutes (for admin confirmation)
 
 
 # ==================================================
@@ -60,7 +60,7 @@ connection_requests = []
 relay_messages = {}
 
 # Admin Management
-admins = set()  # Regular admins (Super Admin is separate)
+admins = set()
 
 
 # ==================================================
@@ -140,17 +140,14 @@ def vehicle_keyboard(prefix="vehicle"):
 # ==================================================
 
 def is_super_admin(user_id):
-    """Super Admin (አንተ ብቻ)"""
     return int(user_id) == SUPER_ADMIN_ID
 
 
 def is_admin(user_id):
-    """Admin ወይም Super Admin"""
     return is_super_admin(user_id) or int(user_id) in admins
 
 
 def is_admin_only(user_id):
-    """Regular Admin (Super Admin አይደለም)"""
     return is_admin(user_id) and not is_super_admin(user_id)
 
 
@@ -293,43 +290,61 @@ def clear_payment_request(req):
 # PHONE NUMBER DETECTION
 # ==================================================
 
-import re
-
 def contains_phone_number(text):
-    """
-    የስልክ ቁጥር ካለ ይመልሳል:
-    - 09... / 07... / +251... / 0960...
-    - ዜሮ ዘጠኝ / ዜሮ ሰባት
-    """
+    """የስልክ ቁጥር ካለ ይመልሳል: 09/07/+251/ዜሮ ዘጠኝ"""
     if not text:
         return False
-    
+
     text_lower = text.lower().replace(" ", "").replace("-", "")
-    
-    # የቁጥር ፓተርኖች
+
     patterns = [
-        r"\+?251[97]\d{8}",       # +2519... / +2517...
-        r"0[97]\d{8}",             # 09... / 07...
-        r"0[97]\s?\d{3}\s?\d{4}",  # 09 xxx xxxx
+        r"\+?251[97]\d{8}",
+        r"0[97]\d{8}",
+        r"0[97]\s?\d{3}\s?\d{4}",
     ]
-    
+
     for pattern in patterns:
         if re.search(pattern, text_lower):
             return True
-    
-    # የፅሁፍ ፓተርኖች
+
     text_clean = text.lower().replace(" ", "")
     word_patterns = [
         "ዜሮዘጠኝ", "ዜሮሰባት",
         "ዜሮ ዘጠኝ", "ዜሮ ሰባት",
         "zero nine", "zero seven",
     ]
-    
+
     for wp in word_patterns:
         if wp.replace(" ", "") in text_clean:
             return True
-    
+
     return False
+
+
+# ==================================================
+# START
+# ==================================================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    user = update.effective_user
+
+    if user.id not in users:
+        users[user.id] = {
+            "name": user.full_name,
+            "username": user.username or "",
+            "id": user.id,
+        }
+    else:
+        users[user.id]["name"] = user.full_name
+        users[user.id]["username"] = user.username or ""
+
+    await update.message.reply_text(
+        "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
+        "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
+        "ከታች ያለውን ምናሌ ይጠቀሙ።",
+        reply_markup=main_menu()
+    )
 
 
 # ==================================================
@@ -338,18 +353,18 @@ def contains_phone_number(text):
 
 async def check_timeout(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
-    
+
     for i, req in enumerate(connection_requests):
         if req.get("status") != "pending":
             continue
         if req.get("timeout_alerted"):
             continue
-        
+
         created_at = req.get("created_at")
         if not created_at:
             req["created_at"] = now
             continue
-        
+
         elapsed = (now - created_at).total_seconds()
         if elapsed >= TIMEOUT_SECONDS:
             req["timeout_alerted"] = True
@@ -366,7 +381,7 @@ async def send_timeout_notifications(context, index):
     requester_id = req["requester_id"]
     requester_info = get_user_full_info(requester_id)
 
-    # 1. SMS TO OWNER
+    # 1. SMS TO OWNER (placeholder)
     if owner_info["phone"]:
         try:
             sms_text = (
@@ -380,7 +395,7 @@ async def send_timeout_notifications(context, index):
                 f"{SUPPORT_PHONE_1}\n"
                 f"{SUPPORT_PHONE_2}"
             )
-            await send_sms_to_phone(owner_info["phone"], sms_text)
+            print(f"[SMS] To: {owner_info['phone']}")
         except Exception as e:
             print(f"Owner SMS error: {e}")
 
@@ -481,41 +496,6 @@ async def send_timeout_notifications(context, index):
         )
     except Exception as e:
         print(f"Admin timeout error: {e}")
-
-
-async def send_sms_to_phone(phone, message):
-    """SMS placeholder — Termux ሲዘጋጅ ይሠራል."""
-    try:
-        print(f"[SMS] To: {phone}")
-        print(f"[SMS] Msg: {message[:80]}...")
-    except Exception as e:
-        print(f"SMS error: {e}")
-
-
-# ==================================================
-# START
-# ==================================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    user = update.effective_user
-
-    if user.id not in users:
-        users[user.id] = {
-            "name": user.full_name,
-            "username": user.username or "",
-            "id": user.id,
-        }
-    else:
-        users[user.id]["name"] = user.full_name
-        users[user.id]["username"] = user.username or ""
-
-    await update.message.reply_text(
-        "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
-        "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
-        "ከታች ያለውን ምናሌ ይጠቀሙ።",
-        reply_markup=main_menu()
-    )
 
 
 # ==================================================
@@ -662,6 +642,7 @@ async def cargo_price(update, context):
 
     cargo["user_id"] = update.effective_user.id
     cargo["active"] = True
+    cargo["id"] = f"C{len(cargo_posts)+1:03d}"
     cargo_posts.append(cargo.copy())
 
     if cargo.get("price"):
@@ -671,6 +652,7 @@ async def cargo_price(update, context):
 
     await update.message.reply_text(
         "✅ ጭነትዎ በትክክል ተመዝግቧል!\n\n"
+        f"🆔 ID: {cargo['id']}\n"
         f"📍 መነሻ፦ {cargo['from']}\n"
         f"📍 መድረሻ፦ {cargo['to']}\n"
         f"📦 አይነት፦ {cargo['type']}\n"
@@ -780,7 +762,6 @@ async def connection_request(update, context):
         await query.answer("❌ የራስዎን ጭነት መጠየቅ አይችሉም።", show_alert=True)
         return
 
-    # Check if already requested
     for req in connection_requests:
         if (req.get("type") == "cargo"
                 and req["cargo_index"] == index
@@ -795,7 +776,6 @@ async def connection_request(update, context):
         "id": requester.id,
     })
 
-    # Order ID
     order_id = f"CG-{len(connection_requests) + 1:04d}"
 
     request = {
@@ -837,7 +817,6 @@ async def connection_request(update, context):
         "⏳ የጭነቱ ባለቤት ሲቀበል ይነገርዎታል።"
     )
 
-    # Admin notification
     try:
         if SUPER_ADMIN_ID:
             await context.bot.send_message(
@@ -852,7 +831,6 @@ async def connection_request(update, context):
     except Exception:
         pass
 
-    # Notify cargo owner
     try:
         await context.bot.send_message(
             chat_id=cargo["user_id"],
@@ -909,7 +887,7 @@ async def show_connection_requests(update, context):
 
     for i, req in received:
         order_id = req.get("order_id", f"#{i+1}")
-        
+
         if req.get("type") == "truck":
             try:
                 truck = truck_posts[req["truck_index"]]
@@ -1058,11 +1036,67 @@ async def reject_connection(update, context):
 
 
 # ==================================================
-# ADMIN MANAGEMENT SYSTEM
+# ADMIN RELAY
+# ==================================================
+
+async def send_relay_to_admin(context, req_index, sender_id, text, buttons=None):
+    if not SUPER_ADMIN_ID:
+        return False
+    req = connection_requests[req_index]
+    receiver_id = other_party_id(req)
+    relay_id = max(relay_messages.keys(), default=0) + 1
+    relay_messages[relay_id] = {
+        "req_index": req_index,
+        "sender_id": sender_id,
+        "receiver_id": receiver_id,
+        "text": text,
+    }
+    kb = [[InlineKeyboardButton(
+        "➡️ ወደ ሌላኛው ወገን ላክ",
+        callback_data=f"relay_{relay_id}"
+    )]]
+    if buttons:
+        kb.extend(buttons)
+    try:
+        await context.bot.send_message(
+            chat_id=int(SUPER_ADMIN_ID),
+            text=f"📨 TANA CARGO Relay #{relay_id}\n\n{text}",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def relay_forward(update, context):
+    query = update.callback_query
+    await query.answer()
+    if not SUPER_ADMIN_ID or str(update.effective_user.id) != str(SUPER_ADMIN_ID):
+        await query.answer("❌ Admin ብቻ።", show_alert=True)
+        return
+    try:
+        rid = int(query.data.split("_")[1])
+        item = relay_messages.get(rid)
+        if not item:
+            raise ValueError()
+        await context.bot.send_message(
+            chat_id=item["receiver_id"],
+            text="📨 ከTANA CARGO የተላለፈ መልእክት:\n\n" + item["text"]
+        )
+        await query.edit_message_reply_markup(reply_markup=None)
+        await context.bot.send_message(
+            chat_id=item["sender_id"],
+            text="✅ መልእክትዎ Admin አስተላልፎልዎታል።"
+        )
+    except Exception:
+        await query.answer("❌ መልእክቱ ሊተላለፍ አልቻለም።", show_alert=True)
+
+
+# ==================================================
+# ADMIN MANAGEMENT
 # ==================================================
 
 async def addadmin_start(update, context):
-    """Super Admin only — Add new admin"""
     if not is_super_admin(update.effective_user.id):
         await update.message.reply_text(
             "❌ ይህ ተግባር Super Admin ብቻ ነው!\n\n"
@@ -1292,15 +1326,11 @@ async def adminpanel(update, context):
     if is_super:
         buttons = [
             [InlineKeyboardButton("👥 Admins ዝርዝር", callback_data="admin_list")],
-            [InlineKeyboardButton("➕ Admin ጨምር", callback_data="admin_add")],
-            [InlineKeyboardButton("🗑️ Admin አስወግድ", callback_data="admin_remove")],
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
         ]
         text += "\n🔑 አንተ Super Admin ነህ — ሁሉንም ማድረግ ትችላለህ!"
     else:
         buttons = [
-            [InlineKeyboardButton("💳 Pending Payments", callback_data="admin_payments")],
-            [InlineKeyboardButton("🤝 Pending Connections", callback_data="admin_connections")],
             [InlineKeyboardButton("👥 Users", callback_data="admin_users")],
         ]
         text += "\n⚠️ አንተ Admin ነህ — ሌላ Admin መጨመር አትችልም!"
@@ -1328,24 +1358,6 @@ async def admin_panel_callback(update, context):
             return
         await listadmins(update, context)
 
-    elif data == "admin_add":
-        if not is_super_admin(user_id):
-            await query.answer("❌ Super Admin ብቻ!", show_alert=True)
-            return
-        await query.edit_message_text(
-            "➕ Admin መጨመር\n\n"
-            "ይህን ለማድረግ /addadmin ይጻፉ።"
-        )
-
-    elif data == "admin_remove":
-        if not is_super_admin(user_id):
-            await query.answer("❌ Super Admin ብቻ!", show_alert=True)
-            return
-        await query.edit_message_text(
-            "🗑️ Admin ማስወገድ\n\n"
-            "ይህን ለማድረግ /removeadmin ይጻፉ።"
-        )
-
     elif data == "admin_broadcast":
         if not is_super_admin(user_id):
             await query.answer("❌ Super Admin ብቻ!", show_alert=True)
@@ -1355,80 +1367,11 @@ async def admin_panel_callback(update, context):
             "ይህን ለማድረግ /broadcast ይጻፉ።"
         )
 
-    elif data == "admin_payments":
-        await query.edit_message_text(
-            "💳 Pending Payments\n\n"
-            "ይህን ለማየት /pendingpayments ይጻፉ።"
-        )
-
-    elif data == "admin_connections":
-        await query.edit_message_text(
-            "🤝 Pending Connections\n\n"
-            "ይህን ለማየት /pendingconnections ይጻፉ።"
-        )
-
     elif data == "admin_users":
         await query.edit_message_text(
             "👥 Users\n\n"
             "ይህን ለማየት /adminusers ይጻፉ።"
         )
-
-
-# ==================================================
-# ADMIN RELAY
-# ==================================================
-
-async def send_relay_to_admin(context, req_index, sender_id, text, buttons=None):
-    if not SUPER_ADMIN_ID:
-        return False
-    req = connection_requests[req_index]
-    receiver_id = other_party_id(req)
-    relay_id = max(relay_messages.keys(), default=0) + 1
-    relay_messages[relay_id] = {
-        "req_index": req_index,
-        "sender_id": sender_id,
-        "receiver_id": receiver_id,
-        "text": text,
-    }
-    kb = [[InlineKeyboardButton(
-        "➡️ ወደ ሌላኛው ወገን ላክ",
-        callback_data=f"relay_{relay_id}"
-    )]]
-    if buttons:
-        kb.extend(buttons)
-    try:
-        await context.bot.send_message(
-            chat_id=int(SUPER_ADMIN_ID),
-            text=f"📨 TANA CARGO Relay #{relay_id}\n\n{text}",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return True
-    except Exception:
-        return False
-
-
-async def relay_forward(update, context):
-    query = update.callback_query
-    await query.answer()
-    if not SUPER_ADMIN_ID or str(update.effective_user.id) != str(SUPER_ADMIN_ID):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-    try:
-        rid = int(query.data.split("_")[1])
-        item = relay_messages.get(rid)
-        if not item:
-            raise ValueError()
-        await context.bot.send_message(
-            chat_id=item["receiver_id"],
-            text="📨 ከTANA CARGO የተላለፈ መልእክት:\n\n" + item["text"]
-        )
-        await query.edit_message_reply_markup(reply_markup=None)
-        await context.bot.send_message(
-            chat_id=item["sender_id"],
-            text="✅ መልእክትዎ Admin አስተላልፎልዎታል።"
-        )
-    except Exception:
-        await query.answer("❌ መልእክቱ ሊተላለፍ አልቻለም።", show_alert=True)
 
 
 # ==================================================
@@ -1557,7 +1500,6 @@ async def agree_price(update, context):
         await query.answer("⚠️ የራስዎን ዋጋ መቀበል አይችሉም።", show_alert=True)
         return
 
-    # Mark confirmation
     if user_id == req["requester_id"]:
         if req["requester_confirmed"]:
             await query.answer("✅ እርስዎ ቀድሞ ተስማምተዋል።", show_alert=True)
@@ -1571,7 +1513,6 @@ async def agree_price(update, context):
 
     order_id = req.get("order_id", f"#{index+1}")
 
-    # Both agreed → Move to payment
     if req["requester_confirmed"] and req["other_confirmed"]:
         req["final_price"] = price
         req["status"] = "awaiting_payment"
@@ -1587,7 +1528,6 @@ async def agree_price(update, context):
 
         each_side, total = commission_amount(price)
 
-        # Success message
         success_text = (
             f"🎉 እንኳን ደስ አላችሁ!\n\n"
             f"✅ በ TANA CARGO | ጣና ጭነት በኩል "
@@ -1614,19 +1554,15 @@ async def agree_price(update, context):
 
         await query.edit_message_text(success_text)
 
-        # Send to both parties
         for user in [req["requester_id"], other_party_id(req)]:
             try:
                 await context.bot.send_message(chat_id=user, text=success_text)
             except Exception:
                 pass
 
-        # Send admin confirmation request
         await send_admin_agreement_request(context, index)
-
         return
 
-    # Only one agreed
     other_user = other_party_id(req) if user_id == req["requester_id"] else req["requester_id"]
 
     buttons = [
@@ -1697,7 +1633,6 @@ async def disagree_price(update, context):
         await query.answer("❌ ይህ የእርስዎ ድርድር አይደለም።", show_alert=True)
         return
 
-    # Reset confirmations
     req["requester_confirmed"] = False
     req["other_confirmed"] = False
 
@@ -1885,7 +1820,6 @@ async def receipt_message(update, context):
     req = connection_requests[index]
     receipt = update.message.text.strip()
 
-    # Phone detection
     if contains_phone_number(receipt):
         await update.message.reply_text(
             "⚠️ ስልክ ቁጥር መለዋወጥ ክልክል ነው!\n\n"
@@ -2103,10 +2037,6 @@ async def admin_payment_action(update, context):
 
     order_id = req.get("order_id", f"#{index+1}")
 
-    # ==================================================
-    # APPROVE
-    # ==================================================
-
     if action == "adminapprove":
         req[approved_key] = True
         req[rejected_key] = False
@@ -2116,7 +2046,6 @@ async def admin_payment_action(update, context):
         except Exception:
             pass
 
-        # Check both approvals FIRST
         if (req.get("requester_payment_approved")
                 and req.get("other_payment_approved")):
             await share_full_information(index, context)
@@ -2135,10 +2064,6 @@ async def admin_payment_action(update, context):
                 )
             except Exception:
                 pass
-
-    # ==================================================
-    # REJECT
-    # ==================================================
 
     elif action == "adminreject":
         req[approved_key] = False
@@ -2928,7 +2853,10 @@ def main():
     application = Application.builder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
-    # Simple commands
+    # ==================================================
+    # Simple Commands
+    # ==================================================
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cargo", cargo_start))
     application.add_handler(CommandHandler("truck", truck_start))
@@ -2942,7 +2870,22 @@ def main():
     application.add_handler(CommandHandler("listadmins", listadmins))
     application.add_handler(CommandHandler("adminusers", admin_users))
 
-    # Master conversation
+    # ==================================================
+    # Master Conversation
+    # ==================================================
+
+    MENU_REGEX = (
+        r"^(🚚 ጭነት መለጠፍ"
+        r"|🔎 ጭነት መፈለግ"
+        r"|🚛 መኪና ማስመዝገብ"
+        r"|🚛 መኪና መፈለግ"
+        r"|👤 የኔ መረጃ"
+        r"|🤝 ግንኙነት ጥያቄዎች"
+        r"|💳 የአገልግሎት ክፍያ ለመፈፀም"
+        r"|📞 Support"
+        r"|ℹ️ About)$"
+    )
+
     master_conversation = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), cargo_start),
@@ -2959,37 +2902,228 @@ def main():
         ],
         states={
             CARGO_FROM: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from),
             ],
             CARGO_TO: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to),
             ],
             CARGO_TYPE: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type),
             ],
             CARGO_VEHICLE: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 CallbackQueryHandler(cargo_vehicle, pattern=r"^cargo_vehicle_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_vehicle_text),
             ],
             CARGO_SIZE: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 CallbackQueryHandler(cargo_size, pattern=r"^size_"),
             ],
             CARGO_WEIGHT: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight),
             ],
             CARGO_DATE: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date),
             ],
             CARGO_PHONE: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"), menu_interrupt),
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone),
             ],
             CARGO_PRICE: [
-                MessageHandler(filters.Regex(r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|👤 የኔ መረጃ|🤝 ግንኙነት ጥያቄዎች|💳
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price),
+            ],
+            TRUCK_TYPE: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type),
+            ],
+            TRUCK_PLATE: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate),
+            ],
+            TRUCK_CAPACITY: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity),
+            ],
+            TRUCK_FROM: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_from),
+            ],
+            TRUCK_ROUTE: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_route),
+            ],
+            TRUCK_ADDRESS: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_address),
+            ],
+            TRUCK_DRIVER: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_driver),
+            ],
+            TRUCK_PHONE: [
+                MessageHandler(filters.Regex(MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
+    application.add_handler(master_conversation)
+
+    # ==================================================
+    # Admin Management Conversations
+    # ==================================================
+
+    add_admin_conv = ConversationHandler(
+        entry_points=[CommandHandler("addadmin", addadmin_start)],
+        states={
+            ADD_ADMIN_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, addadmin_id),
+            ],
+            ADD_ADMIN_CONFIRM: [
+                CallbackQueryHandler(addadmin_confirm, pattern=r"^addadmin_"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(add_admin_conv)
+
+    broadcast_conv = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start)],
+        states={
+            BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(broadcast_conv)
+
+    # ==================================================
+    # Admin Commands
+    # ==================================================
+
+    application.add_handler(CommandHandler("removeadmin", removeadmin_start))
+
+    # ==================================================
+    # Callback Handlers
+    # ==================================================
+
+    # Remove admin buttons
+    application.add_handler(CallbackQueryHandler(
+        removeadmin_action,
+        pattern=r"^removeadmin_"
+    ))
+
+    # Admin panel buttons
+    application.add_handler(CallbackQueryHandler(
+        admin_panel_callback,
+        pattern=r"^admin_"
+    ))
+
+    # Admin delete user
+    application.add_handler(CallbackQueryHandler(
+        admin_delete_user,
+        pattern=r"^admindeleteuser_\d+$"
+    ))
+
+    # Relay
+    application.add_handler(CallbackQueryHandler(
+        relay_forward,
+        pattern=r"^relay_\d+$"
+    ))
+
+    # Connection buttons
+    application.add_handler(CallbackQueryHandler(
+        connection_request,
+        pattern=r"^connect_\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        truck_connection_request,
+        pattern=r"^truckconnect_\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        accept_connection,
+        pattern=r"^accept_\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        reject_connection,
+        pattern=r"^reject_\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        admin_agreement_confirm,
+        pattern=r"^adminagree_\d+$"
+    ))
+
+    # Negotiation buttons
+    application.add_handler(CallbackQueryHandler(
+        agree_price,
+        pattern=r"^agreeprice_\d+_\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        disagree_price,
+        pattern=r"^disagreeprice_\d+_\d+$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        counter_price_button,
+        pattern=r"^counterprice_\d+_\d+$"
+    ))
+
+    # Admin payment buttons
+    application.add_handler(CallbackQueryHandler(
+        admin_payment_action,
+        pattern=r"^admin(approve|reject)_\d+_(requester|other)_\d+$"
+    ))
+
+    # ==================================================
+    # Photo Receipt
+    # ==================================================
+
+    application.add_handler(MessageHandler(filters.PHOTO, receipt_photo))
+
+    # ==================================================
+    # Non-Conversation Text
+    # ==================================================
+
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        text_router
+    ))
+
+    # ==================================================
+    # Timeout Job
+    # ==================================================
+
+    if application.job_queue:
+        application.job_queue.run_repeating(
+            check_timeout,
+            interval=30,
+            first=30
+        )
+        print("✅ Timeout checker started (every 30s)")
+    else:
+        print("⚠️ JobQueue not available — timeout disabled")
+
+    # ==================================================
+    # Start
+    # ==================================================
+
+    print("TANA CARGO Bot is starting...")
+    start_health_server()
+
+    application.run_polling(drop_pending_updates=True)
+
+
+# ==================================================
+# RUN
+# ==================================================
+
+if __name__ == "__main__":
+    main()
