@@ -329,6 +329,8 @@ def timeout_warning_text():
         "እናሳውቅዎታለን።\n\n"
         "🙏 ስለትዕግስትዎ እናመሰግናለን።"
     )
+
+
 # ==================================================
 # CARGO POSTING
 # ==================================================
@@ -468,7 +470,6 @@ async def cargo_date(update, context):
     date_text = update.message.text.strip()
     calendar = context.user_data["cargo"].get("calendar", "GC")
 
-    # Validate date format
     try:
         date_obj = datetime.strptime(date_text, "%d/%m/%Y")
     except ValueError:
@@ -479,7 +480,6 @@ async def cargo_date(update, context):
         )
         return CARGO_DATE
 
-    # Check if date is in the past (only for GC)
     if calendar == "GC":
         today = datetime.now().replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -491,7 +491,6 @@ async def cargo_date(update, context):
             )
             return CARGO_DATE
 
-    # Convert between ET and GC
     et_date, gc_date, error = convert_calendar(date_text, calendar)
     if error:
         await update.message.reply_text(f"❌ {error}")
@@ -580,7 +579,6 @@ async def cargo_price(update, context):
         reply_markup=main_menu()
     )
 
-    # Notify matching trucks
     for truck in truck_posts:
         if not truck.get("active", True):
             continue
@@ -720,7 +718,6 @@ async def truck_phone(update, context):
         reply_markup=main_menu()
     )
 
-    # Notify matching cargos
     for cargo in cargo_posts:
         if not cargo.get("active", True):
             continue
@@ -741,6 +738,8 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
+
+
 # ==================================================
 # FIND CARGO
 # ==================================================
@@ -793,7 +792,6 @@ async def find_cargo(update, context):
         "👉 እባክዎን የፈለጉትን ጭነት በቁጥር ይምረጡ።"
     )
 
-    # Send as one message with all buttons
     await update.message.reply_text(
         message,
         reply_markup=InlineKeyboardMarkup(buttons)
@@ -846,11 +844,12 @@ async def find_truck(update, context):
         "👉 እባክዎን የፈለጉትን መኪና በቁጥር ይምረጡ።"
     )
 
-    # Send as one message with all buttons
     await update.message.reply_text(
         message,
         reply_markup=InlineKeyboardMarkup(buttons)
     )
+
+
 # ==================================================
 # CONNECTION REQUEST - CARGO
 # ==================================================
@@ -882,7 +881,6 @@ async def connection_request(update, context):
         )
         return
 
-    # Check for existing request
     for req in connection_requests:
         if (
             req.get("type") == "cargo"
@@ -945,7 +943,6 @@ async def connection_request(update, context):
         "⏳ የጭነቱ ባለቤት ሲቀበል ይነገርዎታል።"
     )
 
-    # Notify admin
     try:
         if ADMIN_USER_ID:
             await context.bot.send_message(
@@ -962,7 +959,6 @@ async def connection_request(update, context):
     except Exception:
         pass
 
-    # Notify cargo owner
     try:
         await context.bot.send_message(
             chat_id=cargo["user_id"],
@@ -1022,7 +1018,6 @@ async def truck_connection_request(update, context):
         )
         return
 
-    # Check for existing request
     for req in connection_requests:
         if (
             req.get("type") == "truck"
@@ -1083,7 +1078,6 @@ async def truck_connection_request(update, context):
         "🔒 የግል መረጃዎች እስከ ማረጋገጫ ድረስ ተደብቀዋል።"
     )
 
-    # Notify admin
     try:
         if ADMIN_USER_ID:
             await context.bot.send_message(
@@ -1099,7 +1093,6 @@ async def truck_connection_request(update, context):
     except Exception:
         pass
 
-    # Notify truck owner
     try:
         await context.bot.send_message(
             chat_id=truck["user_id"],
@@ -1163,7 +1156,6 @@ async def accept_connection(update, context):
     req["current_offer_by"] = None
     req["final_price"] = None
 
-    # Save negotiation index for both parties
     users.setdefault(req["requester_id"], {})
     users.setdefault(other_party_id(req), {})
     users[req["requester_id"]]["negotiation_request"] = index
@@ -1208,7 +1200,6 @@ async def reject_connection(update, context):
 
     req["status"] = "rejected"
 
-    # Clear negotiation/payment index
     for uid in [req["requester_id"], other_party_id(req)]:
         if uid in users:
             users[uid].pop("negotiation_request", None)
@@ -1357,7 +1348,6 @@ async def submit_price(update, context):
     req = connection_requests[active_index]
     text = update.message.text.strip()
 
-    # Allow text prices like "በስምምነት"
     if text in ["በስምምነት", "በድርድር", "ድርድር", "ስምምነት"]:
         price = None
         price_display = "በስምምነት"
@@ -1380,11 +1370,9 @@ async def submit_price(update, context):
             )
             return
 
-    # New offer version
     req["offer_version"] = req.get("offer_version", 0) + 1
     version = req["offer_version"]
 
-    # New offer cancels old agreement
     req["requester_confirmed"] = False
     req["other_confirmed"] = False
     req["final_price"] = None
@@ -1405,7 +1393,6 @@ async def submit_price(update, context):
         "⏳ የሌላኛውን ወገን ምላሽ ይጠብቁ።"
     )
 
-    # Buttons for other party
     buttons = [
         [
             InlineKeyboardButton(
@@ -1421,7 +1408,6 @@ async def submit_price(update, context):
         ],
     ]
 
-    # Send to other party
     other_user = other_party_id(req)
 
     try:
@@ -1438,7 +1424,6 @@ async def submit_price(update, context):
     except Exception:
         pass
 
-    # Notify admin
     try:
         if ADMIN_USER_ID:
             await context.bot.send_message(
@@ -1476,7 +1461,6 @@ async def agree_price(update, context):
     req = connection_requests[index]
     user_id = update.effective_user.id
 
-    # Security: only current version
     current_version = req.get("offer_version", 0)
     if button_version != current_version:
         await query.answer(
@@ -1515,7 +1499,6 @@ async def agree_price(update, context):
         )
         return
 
-    # Confirm
     if user_id == req["requester_id"]:
         if req["requester_confirmed"]:
             await query.answer(
@@ -1533,12 +1516,10 @@ async def agree_price(update, context):
             return
         req["other_confirmed"] = True
 
-    # Only final when both agree
     if req["requester_confirmed"] and req["other_confirmed"]:
         req["final_price"] = price
         req["status"] = "awaiting_payment"
 
-        # Reset payment states
         req["requester_payment_submitted"] = False
         req["other_payment_submitted"] = False
         req["requester_payment_approved"] = False
@@ -1546,7 +1527,6 @@ async def agree_price(update, context):
         req["requester_payment_rejected"] = False
         req["other_payment_rejected"] = False
 
-        # Clear negotiation index
         for uid in [req["requester_id"], other_party_id(req)]:
             if uid in users:
                 users[uid].pop("negotiation_request", None)
@@ -1566,7 +1546,6 @@ async def agree_price(update, context):
             "💳 አሁን እያንዳንዱ ወገን የራሱን 1% ይከፍላል።"
         )
 
-        # Send payment info to both
         payment_text = agreement_success_text(
             price if price else 0,
             each_side
@@ -1583,7 +1562,6 @@ async def agree_price(update, context):
 
         return
 
-    # Only one side agreed
     other_user = (
         other_party_id(req)
         if user_id == req["requester_id"]
@@ -1989,7 +1967,6 @@ async def share_full_information(index, context):
     req["full_info_shared"] = True
     req["status"] = "completed"
 
-    # Deactivate cargo/truck
     if req.get("type") == "truck":
         ti = req.get("truck_index")
         if isinstance(ti, int) and 0 <= ti < len(truck_posts):
@@ -2043,7 +2020,6 @@ async def share_full_information(index, context):
         )
         cargo_owner_phone = cargo.get("phone", "")
 
-        # Find requester's truck
         truck = None
         for item in reversed(truck_posts):
             if item["user_id"] == requester_id:
@@ -2124,7 +2100,6 @@ async def admin_payment_action(update, context):
 
     parts = query.data.split("_")
 
-    # adminapprove_INDEX_SIDE_VERSION
     if len(parts) != 4:
         return
 
@@ -2171,7 +2146,6 @@ async def admin_payment_action(update, context):
         except Exception:
             pass
 
-        # Check both approvals
         if (
             req.get("requester_payment_approved")
             and req.get("other_payment_approved")
@@ -2399,6 +2373,8 @@ async def admin_delete_user(update, context):
     await q.edit_message_text(
         "✅ የደንበኛው መረጃ ከአሁኑ bot memory ተሰርዟል።"
     )
+
+
 # ==================================================
 # START
 # ==================================================
@@ -2603,23 +2579,24 @@ async def menu_router(update, context):
 
 
 # ==================================================
-# TEXT ROUTER
+# TEXT ROUTER (የተስተካከለ)
 # ==================================================
 
 async def text_router(update, context):
+    # በቻናል ላይ የሚለጠፉ መልእክቶች effective_user የላቸውም
+    if update.effective_user is None:
+        return
+
     user_id = update.effective_user.id
 
-    # Check payment first
     payment_index = get_payment_index(user_id)
     if payment_index is not None:
         return await receipt_message(update, context)
 
-    # Check negotiation
     negotiation_index = get_negotiation_index(user_id)
     if negotiation_index is not None:
         return await submit_price(update, context)
 
-    # Otherwise menu
     return await menu_router(update, context)
 
 
@@ -2932,7 +2909,6 @@ def main():
                 ),
             ],
 
-            # ---------------- TRUCK ----------------
             TRUCK_TYPE: [
                 MessageHandler(
                     filters.Regex(
@@ -3045,7 +3021,6 @@ def main():
                 ),
             ],
 
-            # ---------------- SUPPORT ----------------
             SUPPORT_MESSAGE: [
                 MessageHandler(
                     filters.Regex(
@@ -3084,17 +3059,9 @@ def main():
         )
     )
 
-    # ==================================================
-    # ADMIN RELAY
-    # ==================================================
-
     application.add_handler(
         CallbackQueryHandler(relay_forward, pattern=r"^relay_\d+$")
     )
-
-    # ==================================================
-    # CONNECTION BUTTONS
-    # ==================================================
 
     application.add_handler(
         CallbackQueryHandler(
@@ -3131,10 +3098,6 @@ def main():
         )
     )
 
-    # ==================================================
-    # NEGOTIATION BUTTONS
-    # ==================================================
-
     application.add_handler(
         CallbackQueryHandler(
             agree_price,
@@ -3156,10 +3119,6 @@ def main():
         )
     )
 
-    # ==================================================
-    # ADMIN PAYMENT BUTTONS
-    # ==================================================
-
     application.add_handler(
         CallbackQueryHandler(
             admin_payment_action,
@@ -3172,17 +3131,9 @@ def main():
         )
     )
 
-    # ==================================================
-    # PHOTO RECEIPT
-    # ==================================================
-
     application.add_handler(
         MessageHandler(filters.PHOTO, receipt_photo)
     )
-
-    # ==================================================
-    # NON-CONVERSATION TEXT
-    # ==================================================
 
     application.add_handler(
         MessageHandler(
