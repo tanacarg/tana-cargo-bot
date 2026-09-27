@@ -1,3 +1,204 @@
+import os
+import threading
+import sqlite3
+from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    ConversationHandler,
+    CallbackQueryHandler,
+    filters,
+)
+
+
+# ==================================================
+# CONFIG
+# ==================================================
+
+TOKEN = os.getenv("BOT_TOKEN")
+
+SUPPORT_PHONE = "0960011010"
+SUPPORT_PHONE_2 = "0912991128"
+SUPPORT_USERNAME = "@tanapage"
+SUPPORT_URL = "https://t.me/tanapage"
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
+
+CBE_ACCOUNT = os.getenv("CBE_ACCOUNT", "")
+ABAY_ACCOUNT = os.getenv("ABAY_ACCOUNT", "")
+CBE_BIRR = os.getenv("CBE_BIRR", "")
+TELEBIRR = os.getenv("TELEBIRR", "")
+
+NEGOTIATION_TIMEOUT_SECONDS = 300
+CONVERSATION_TIMEOUT_SECONDS = 600
+
+
+# ==================================================
+# DATABASE
+# ==================================================
+
+DB_PATH = "tana_cargo.db"
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            username TEXT,
+            owner_name TEXT,
+            owner_phone TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cargo_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            from_location TEXT,
+            to_location TEXT,
+            cargo_type TEXT,
+            vehicle TEXT,
+            size INTEGER,
+            size_name TEXT,
+            weight TEXT,
+            date_et TEXT,
+            date_gc TEXT,
+            phone TEXT,
+            price REAL,
+            price_display TEXT,
+            price_status TEXT,
+            active INTEGER DEFAULT 1,
+            timestamp TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS truck_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            truck_type TEXT,
+            plate TEXT,
+            capacity TEXT,
+            route TEXT,
+            address TEXT,
+            driver TEXT,
+            phone TEXT,
+            active INTEGER DEFAULT 1,
+            timestamp TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def db_save_user(user_id, name, username, owner_name=None, owner_phone=None):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO users (user_id, name, username, owner_name, owner_phone)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            name = excluded.name,
+            username = excluded.username,
+            owner_name = COALESCE(excluded.owner_name, users.owner_name),
+            owner_phone = COALESCE(excluded.owner_phone, users.owner_phone)
+    """, (user_id, name, username, owner_name, owner_phone))
+    conn.commit()
+    conn.close()
+
+
+def db_save_cargo(cargo):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO cargo_posts (
+            user_id, from_location, to_location, cargo_type, vehicle,
+            size, size_name, weight, date_et, date_gc, phone, price,
+            price_display, price_status, active, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        cargo["user_id"], cargo["from"], cargo["to"], cargo["type"],
+        cargo["vehicle"], cargo["size"], cargo["size_name"], cargo["weight"],
+        cargo.get("date_et", ""), cargo.get("date_gc", ""), cargo["phone"],
+        cargo["price"], cargo["price_display"], cargo["price_status"],
+        1, cargo["timestamp"]
+    ))
+    conn.commit()
+    conn.close()
+
+
+def db_save_truck(truck):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO truck_posts (
+            user_id, truck_type, plate, capacity, route, address,
+            driver, phone, active, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        truck["user_id"], truck["type"], truck["plate"], truck["capacity"],
+        truck["route"], truck["address"], truck["driver"], truck["phone"],
+        1, truck["timestamp"]
+    ))
+    conn.commit()
+    conn.close()
+
+
+# ==================================================
+# MEMORY
+# ==================================================
+
+users = {}
+cargo_posts = []
+truck_posts = []
+connection_requests = []
+negotiation_timeouts = {}
+
+
+# ==================================================
+# STATES
+# ==================================================
+
+(
+    CARGO_FROM,
+    CARGO_TO,
+    CARGO_TYPE,
+    CARGO_VEHICLE,
+    CARGO_SIZE,
+    CARGO_WEIGHT,
+    CARGO_CALENDAR,
+    CARGO_DATE,
+    CARGO_PHONE,
+    CARGO_PRICE,
+) = range(10)
+
+(
+    TRUCK_TYPE,
+    TRUCK_PLATE,
+    TRUCK_CAPACITY,
+    TRUCK_ROUTE,
+    TRUCK_ADDRESS,
+    TRUCK_DRIVER,
+    TRUCK_PHONE,
+) = range(10, 17)
+
+OWNER_NAME, OWNER_PHONE = range(17, 19)
+
+
+# ==================================================
+# MAIN MENU
+# ==================================================
 # ==================================================
 # MAIN MENU
 # ==================================================
