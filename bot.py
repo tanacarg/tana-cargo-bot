@@ -22,7 +22,7 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 
 SUPPORT_PHONE = "0960011010"
 SUPPORT_PHONE_2 = "0912991128"
-SUPPORT_URL = "https://t.me/tanapage"
+BOT_USERNAME = "TanaCargobot"
 
 NEGOTIATION_TIMEOUT_SECONDS = 300
 CONVERSATION_TIMEOUT_SECONDS = 600
@@ -121,7 +121,6 @@ cargo_posts = []
 truck_posts = []
 connection_requests = []
 negotiation_timeouts = {}
-admin_messages = []
 
 # ==================================================
 # STATES
@@ -433,24 +432,43 @@ async def cargo_calendar(update, context):
 async def cargo_date(update, context):
     date_text = update.message.text.strip()
     calendar = context.user_data["cargo"].get("calendar", "GC")
+
     try:
-        date_obj = datetime.strptime(date_text, "%d/%m/%Y")
+        datetime.strptime(date_text, "%d/%m/%Y")
     except ValueError:
         await update.message.reply_text(
             "❌ የቀን ቅርጸቱ ትክክል አይደለም።\n"
-            "እባክዎ በዚህ ቅርጸት ይጻፉ፦ ቀን/ወር/ዓመት\nምሳሌ፦ 25/09/2026"
+            "እባክዎ በዚህ ቅርጸት ይጻፉ፦ ቀን/ወር/ዓመት\n"
+            "ምሳሌ፦ 25/09/2026"
         )
         return CARGO_DATE
-
-    if calendar == "GC":
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if date_obj < today:
-            await update.message.reply_text("❌ ያስገቡት ቀን ያለፈ ቀን ነው።\nእባክዎ የወደፊት ቀን ያስገቡ።")
-            return CARGO_DATE
 
     et_date, gc_date, error = convert_calendar(date_text, calendar)
     if error:
         await update.message.reply_text(f"❌ {error}")
+        return CARGO_DATE
+
+    try:
+        gc_obj = datetime.strptime(gc_date, "%d/%m/%Y")
+    except Exception:
+        await update.message.reply_text("❌ የቀን ስሌት ስህተት። እንደገና ይሞክሩ።")
+        return CARGO_DATE
+
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if gc_obj < today:
+        await update.message.reply_text(
+            "❌ **ያለፈ ቀን አይቀበልም!**\n\n"
+            "እባክዎ የወደፊት ቀን ያስገቡ።"
+        )
+        return CARGO_DATE
+
+    max_date = today + timedelta(days=30)
+    if gc_obj > max_date:
+        await update.message.reply_text(
+            "❌ **ከ1 ወር (30 ቀናት) በላይ የሆነ ቀን አይቀበልም!**\n\n"
+            "እባክዎ በ30 ቀናት ውስጥ ያለ ቀን ያስገቡ።"
+        )
         return CARGO_DATE
 
     context.user_data["cargo"]["date"] = date_text
@@ -458,8 +476,7 @@ async def cargo_date(update, context):
     context.user_data["cargo"]["date_gc"] = gc_date
 
     try:
-        gc_date_obj = datetime.strptime(gc_date, "%d/%m/%Y")
-        expiry_date = gc_date_obj + timedelta(hours=CARGO_EXPIRY_HOURS)
+        expiry_date = gc_obj + timedelta(hours=CARGO_EXPIRY_HOURS)
         context.user_data["cargo"]["expiry_date"] = expiry_date.isoformat()
     except Exception:
         context.user_data["cargo"]["expiry_date"] = ""
@@ -499,7 +516,8 @@ async def cargo_price(update, context):
             price_display = f"{price:,.2f} ብር"
         except ValueError:
             await update.message.reply_text(
-                "❌ እባክዎ ዋጋውን በቁጥር ወይም 'በስምምነት' ብለው ይጻፉ።\n"
+                "❌ እባክዎ ዋጋውን በቁጥር ወይም "
+                "'በስምምነት' ብለው ይጻፉ።\n"
                 "ምሳሌ፦ 55000 ወይም በስምምነት"
             )
             return CARGO_PRICE
@@ -719,19 +737,17 @@ async def find_cargo(update, context):
         )
         return
 
-    buttons = []
-
     for i, cargo in enumerate(active_cargos):
         cargo_id = f"{i + 1:03d}"
         price_display = cargo.get("price_display", "በስምምነት")
+        owner_name = users.get(cargo["user_id"], {}).get("name", "N/A")
 
-        # ስልክ ለAdmin/Super Admin ብቻ ይታያል
         phone_line = ""
         if is_admin_user:
             phone_line = f"📞 ስልክ፦ {cargo.get('phone', 'N/A')}\n"
 
         msg = (
-            f"📦 ጭነት {cargo_id}\n"
+            f"📦 **ጭነት {cargo_id}**\n"
             f"📍 መነሻ፦ {cargo['from']}\n"
             f"📍 መድረሻ፦ {cargo['to']}\n"
             f"📦 አይነት፦ {cargo['type']}\n"
@@ -741,24 +757,22 @@ async def find_cargo(update, context):
             f"📅 ቀን (ET)፦ {cargo.get('date_et', 'N/A')}\n"
             f"📅 ቀን (GC)፦ {cargo.get('date_gc', 'N/A')}\n"
             f"💰 ዋጋ፦ {price_display}\n"
+            f"👤 የጭነት ባለቤት፦ {owner_name}\n"
             f"{phone_line}"
-            f"👤 ደንበኛችን\n"
-            "─────────────────────"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
 
-        # የግንኙነት ቁልፍ ከየእቃው ስር
-        buttons.append([
+        kb = InlineKeyboardMarkup([[
             InlineKeyboardButton(
-                f"🤝 ጭነት {cargo_id} — ግንኙነት ይጫኑ",
-                callback_data=f"connect_{i}"
+                f"👉 ጭነት {cargo_id} ን መርጠዋል ይጫኑ",
+                callback_data=f"connect_{cargo_posts.index(cargo)}"
             )
-        ])
+        ]])
 
-        await update.message.reply_text(msg)
+        await update.message.reply_text(msg, reply_markup=kb)
 
     await update.message.reply_text(
-        f"📋 ጠቅላላ {len(active_cargos)} ጭነቶች ተገኝተዋል።\n\n"
-        "👉 ከላይ ያለውን የግንኙነት ቁልፍ ይጫኑ።"
+        f"📋 ጠቅላላ {len(active_cargos)} ጭነቶች ተገኝተዋል።"
     )
 
 # ==================================================
@@ -778,83 +792,44 @@ async def find_truck(update, context):
         )
         return
 
-    buttons = []
-
     for i, truck in enumerate(active_trucks):
         truck_id = f"{i + 1:03d}"
+        owner_name = users.get(truck["user_id"], {}).get("name", "N/A")
 
         phone_line = ""
         if is_admin_user:
             phone_line = (
                 f"📞 ስልክ፦ {truck.get('phone', 'N/A')}\n"
                 f"🔢 ታርጋ፦ {truck.get('plate', 'N/A')}\n"
-                f"👨‍✈️ ሹፌር፦ {truck.get('driver', 'N/A')}\n"
             )
 
         msg = (
-            f"🚛 የጭነት መኪና {truck_id}\n"
+            f"🚛 **የጭነት መኪና {truck_id}**\n"
             f"🔹 አይነት፦ {truck['type']}\n"
             f"⚖️ አቅም፦ {truck['capacity']}\n"
             f"🛣️ መንገድ፦ {truck.get('route', 'N/A')}\n"
             f"📍 አድራሻ፦ {truck['address']}\n"
+            f"👨‍✈️ ሹፌር፦ {truck.get('driver', 'N/A')}\n"
+            f"👤 ባለቤት፦ {owner_name}\n"
             f"{phone_line}"
-            f"👤 ደንበኛችን\n"
-            "─────────────────────"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
 
-        buttons.append([
+        kb = InlineKeyboardMarkup([[
             InlineKeyboardButton(
-                f"🤝 የጭነት መኪና {truck_id} — ግንኙነት ይጫኑ",
-                callback_data=f"truckconnect_{i}"
+                f"👉 የጭነት መኪና {truck_id} ን መርጠዋል ይጫኑ",
+                callback_data=f"truckconnect_{truck_posts.index(truck)}"
             )
-        ])
+        ]])
 
-        await update.message.reply_text(msg)
+        await update.message.reply_text(msg, reply_markup=kb)
 
     await update.message.reply_text(
-        f"📋 ጠቅላላ {len(active_trucks)} መኪኖች ተገኝተዋል።\n\n"
-        "👉 ከላይ ያለውን የግንኙነት ቁልፍ ይጫኑ።"
+        f"📋 ጠቅላላ {len(active_trucks)} መኪኖች ተገኝተዋል።"
     )
 
 # ==================================================
-# NOTIFICATION TO ADMIN (When user selects)
-# ==================================================
-
-async def notify_admins_selection(context, req_index, req, item_info):
-    """ለSuper Admin እና Admin ማሳወቂያ ይልካል"""
-    for admin_id in get_admin_ids():
-        try:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    "✅ Right",
-                    callback_data=f"adminright_{req_index}"
-                ),
-                InlineKeyboardButton(
-                    "❌ X አጥፋ",
-                    callback_data=f"adminxdelete_{req_index}"
-                )
-            ]])
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=(
-                    "🔔 TANA CARGO — አዲስ ግንኙነት ጥያቄ\n\n"
-                    f"📌 Request ID፦ {req_index}\n"
-                    f"👤 ጠያቂ፦ {req['requester_name']}\n"
-                    f"🆔 Telegram ID፦ {req['requester_id']}\n\n"
-                    f"{item_info}\n\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "📌 ጭነት ፈላጊ ደንበኛ ጭነት መርጧል።\n"
-                    "እባክዎ የግንኙነት ጥያቄዎች ጋ ገብተው ቼክ ያድርጉ።\n\n"
-                    "✅ Right = ትክክል ነው\n"
-                    "❌ X = ማጥፋት (Super Admin ብቻ)"
-                ),
-                reply_markup=kb
-            )
-        except Exception as e:
-            print(f"NOTIFY ADMIN ERROR: {e}")
-
-# ==================================================
-# CONNECTION REQUEST - CARGO
+# CARGO CONNECTION REQUEST
 # ==================================================
 
 async def connection_request(update, context):
@@ -897,23 +872,14 @@ async def connection_request(update, context):
         "requester_name": requester.full_name,
         "requester_username": requester.username or "",
         "status": "pending",
-        "offers": [],
-        "current_offer": None,
-        "current_offer_by": None,
-        "offer_version": 0,
-        "final_price": None,
-        "requester_confirmed": False,
-        "other_confirmed": False,
-        "requester_payment_submitted": False,
-        "other_payment_submitted": False,
-        "requester_payment_approved": False,
-        "other_payment_approved": False,
-        "requester_payment_rejected": False,
-        "other_payment_rejected": False,
-        "requester_payment_version": 0,
-        "other_payment_version": 0,
-        "full_info_shared": False,
-        "admin_right_confirmed": False,
+        "offers": [], "current_offer": None, "current_offer_by": None,
+        "offer_version": 0, "final_price": None,
+        "requester_confirmed": False, "other_confirmed": False,
+        "requester_payment_submitted": False, "other_payment_submitted": False,
+        "requester_payment_approved": False, "other_payment_approved": False,
+        "requester_payment_rejected": False, "other_payment_rejected": False,
+        "requester_payment_version": 0, "other_payment_version": 0,
+        "full_info_shared": False, "admin_right_confirmed": False,
         "created_at": datetime.now().isoformat(),
     }
 
@@ -921,21 +887,60 @@ async def connection_request(update, context):
     req_index = len(connection_requests) - 1
 
     await query.edit_message_text(
-        "✅ የግንኙነት ጥያቄዎ ተላክቷል።\n\n"
-        "⏳ አስተዳዳሪው ሲያረጋግጥ ይነገርዎታል።"
+        "✅ **ጭነቱን መርጠዋል!**\n\n"
+        "📌 ከደቂቃዎች በኋላ እንደውላለን።\n"
+        "🙏 እናመሰግናለን!"
     )
 
-    # ለAdmin/Super Admin ማሳወቂያ
-    item_info = (
-        f"📍 {cargo['from']} ➡️ {cargo['to']}\n"
-        f"📦 {cargo['type']}\n"
-        f"🚛 {cargo['vehicle']}\n"
-        f"⚖️ {cargo['weight']}"
+    # ==========================================
+    # ለ Admin/Super Admin ማሳወቂያ
+    # ==========================================
+    cargo_owner_name = users.get(cargo["user_id"], {}).get("name", "N/A")
+    cargo_owner_phone = cargo.get("phone", "N/A")
+
+    notification_text = (
+        "🔔 **TANA CARGO — አዲስ ግንኙነት ጥያቄ**\n\n"
+        f"📌 Request ID: {req_index}\n\n"
+        f"📦 **የጭነት ዝርዝር:**\n"
+        f"📍 መነሻ: {cargo['from']}\n"
+        f"📍 መድረሻ: {cargo['to']}\n"
+        f"📦 አይነት: {cargo['type']}\n"
+        f"🚛 የሚፈለግ: {cargo['vehicle']}\n"
+        f"⚖️ ክብደት: {cargo['weight']}\n"
+        f"💰 ዋጋ: {cargo['price_display']}\n\n"
+        f"👤 **የጭነት ባለቤት:**\n"
+        f"   • ስም: {cargo_owner_name}\n"
+        f"   • ስልክ: {cargo_owner_phone}\n"
+        f"   • Telegram ID: {cargo['user_id']}\n\n"
+        f"👤 **ጠያቂ (የመኪና ባለቤት):**\n"
+        f"   • ስም: {requester.full_name}\n"
+        f"   • Username: @{requester.username or 'የለም'}\n"
+        f"   • Telegram ID: {requester.id}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 ጭነት ፈላጊ ደንበኛ ጭነት መርጧል!\n"
+        "እባክዎ የግንኙነት ጥያቄዎች ጋ ገብተው ቼክ ያድርጉ።"
     )
-    await notify_admins_selection(context, req_index, request, item_info)
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Right", callback_data=f"adminright_{req_index}"),
+            InlineKeyboardButton("❌ X አጥፋ", callback_data=f"adminxdelete_{req_index}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ Clear", callback_data=f"adminclear_{req_index}")
+        ]
+    ])
+
+    for admin_id in get_admin_ids():
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id, text=notification_text, reply_markup=kb
+            )
+        except Exception:
+            pass
 
 # ==================================================
-# CONNECTION REQUEST - TRUCK
+# TRUCK CONNECTION REQUEST
 # ==================================================
 
 async def truck_connection_request(update, context):
@@ -978,23 +983,14 @@ async def truck_connection_request(update, context):
         "requester_name": requester.full_name,
         "requester_username": requester.username or "",
         "status": "pending",
-        "offers": [],
-        "current_offer": None,
-        "current_offer_by": None,
-        "offer_version": 0,
-        "final_price": None,
-        "requester_confirmed": False,
-        "other_confirmed": False,
-        "requester_payment_submitted": False,
-        "other_payment_submitted": False,
-        "requester_payment_approved": False,
-        "other_payment_approved": False,
-        "requester_payment_rejected": False,
-        "other_payment_rejected": False,
-        "requester_payment_version": 0,
-        "other_payment_version": 0,
-        "full_info_shared": False,
-        "admin_right_confirmed": False,
+        "offers": [], "current_offer": None, "current_offer_by": None,
+        "offer_version": 0, "final_price": None,
+        "requester_confirmed": False, "other_confirmed": False,
+        "requester_payment_submitted": False, "other_payment_submitted": False,
+        "requester_payment_approved": False, "other_payment_approved": False,
+        "requester_payment_rejected": False, "other_payment_rejected": False,
+        "requester_payment_version": 0, "other_payment_version": 0,
+        "full_info_shared": False, "admin_right_confirmed": False,
         "created_at": datetime.now().isoformat(),
     }
 
@@ -1002,19 +998,59 @@ async def truck_connection_request(update, context):
     req_index = len(connection_requests) - 1
 
     await query.edit_message_text(
-        "✅ የግንኙነት ጥያቄዎ ተላክቷል።\n\n"
-        "⏳ አስተዳዳሪው ሲያረጋግጥ ይነገርዎታል።"
+        "✅ **መኪናውን መርጠዋል!**\n\n"
+        "📌 ከደቂቃዎች በኋላ እንደውላለን።\n"
+        "🙏 እናመሰግናለን!"
     )
 
-    item_info = (
-        f"🚛 {truck['type']}\n"
-        f"⚖️ {truck['capacity']}\n"
-        f"🛣️ {truck.get('route', 'N/A')}\n"
-        f"📍 {truck['address']}"
+    # ==========================================
+    # ለ Admin/Super Admin ማሳወቂያ
+    # ==========================================
+    truck_owner_name = users.get(truck["user_id"], {}).get("name", "N/A")
+    truck_owner_phone = truck.get("phone", "N/A")
+
+    notification_text = (
+        "🔔 **TANA CARGO — አዲስ ግንኙነት ጥያቄ**\n\n"
+        f"📌 Request ID: {req_index}\n\n"
+        f"🚛 **የመኪና ዝርዝር:**\n"
+        f"🔹 አይነት: {truck['type']}\n"
+        f"⚖️ አቅም: {truck['capacity']}\n"
+        f"🛣️ መንገድ: {truck.get('route', 'N/A')}\n"
+        f"📍 አድራሻ: {truck['address']}\n"
+        f"👨‍✈️ ሹፌር: {truck.get('driver', 'N/A')}\n\n"
+        f"👤 **የመኪና ባለቤት:**\n"
+        f"   • ስም: {truck_owner_name}\n"
+        f"   • ስልክ: {truck_owner_phone}\n"
+        f"   • Telegram ID: {truck['user_id']}\n\n"
+        f"👤 **ጠያቂ (የጭነት ባለቤት):**\n"
+        f"   • ስም: {requester.full_name}\n"
+        f"   • Username: @{requester.username or 'የለም'}\n"
+        f"   • Telegram ID: {requester.id}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 የመኪና ፈላጊ ደንበኛ መኪና መርጧል!\n"
+        "እባክዎ የግንኙነት ጥያቄዎች ጋ ገብተው ቼክ ያድርጉ።"
     )
-    await notify_admins_selection(context, req_index, request, item_info)
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Right", callback_data=f"adminright_{req_index}"),
+            InlineKeyboardButton("❌ X አጥፋ", callback_data=f"adminxdelete_{req_index}")
+        ],
+        [
+            InlineKeyboardButton("🗑️ Clear", callback_data=f"adminclear_{req_index}")
+        ]
+    ])
+
+    for admin_id in get_admin_ids():
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id, text=notification_text, reply_markup=kb
+            )
+        except Exception:
+            pass
+
 # ==================================================
-# ADMIN RIGHT/X CONFIRMATION
+# ADMIN RIGHT CONFIRM (ለባለቤቱ ማሳወቂያ ይልካል)
 # ==================================================
 
 async def admin_right_confirm(update, context):
@@ -1030,6 +1066,11 @@ async def admin_right_confirm(update, context):
         return
 
     req = connection_requests[index]
+
+    if req.get("admin_right_confirmed"):
+        await query.answer("⚠️ ይህ ቀድሞ ተረጋግጧል!", show_alert=True)
+        return
+
     req["admin_right_confirmed"] = True
     req["status"] = "negotiating"
 
@@ -1042,23 +1083,49 @@ async def admin_right_confirm(update, context):
 
     await query.edit_message_text(
         "✅ **Right ተረጋግጧል!**\n\n"
-        "ድርድር ተጀምሯል።"
+        "ለባለቤቱ ማሳወቂያ ተልኳል።"
     )
 
-    # Notify both parties
-    for uid in [req["requester_id"], other_party_id(req)]:
-        try:
-            await context.bot.send_message(
-                chat_id=uid,
-                text=(
-                    "✅ **TANA CARGO — ማረጋገጫ**\n\n"
-                    "አስተዳዳሪው ጥያቄውን አረጋግጧል።\n\n"
-                    "💰 ለመጀመር የሚፈልጉትን ዋጋ በብር ይጻፉ።\n"
-                    "ምሳሌ፦ 55000 ወይም በስምምነት"
-                )
-            )
-        except Exception:
-            pass
+    # ==========================================
+    # ለባለቤቱ የሚላክ ማሳወቂያ (1 ጊዜ ብቻ)
+    # ==========================================
+    owner_id = other_party_id(req)
+
+    if req.get("type") == "truck":
+        owner_msg = (
+            "ውድ ደንበኛችን፣\n\n"
+            "የለጠፉትን የጭነት መኪና የሚፈልግ ደንበኛ አግኝተናል!\n\n"
+            "እባክዎ መልዕክቱን እንዳዩ በሚከተሉት ቁጥሮች ይደውሉ፦\n\n"
+            f"📞 {SUPPORT_PHONE}\n"
+            f"📞 {SUPPORT_PHONE_2}\n\n"
+            "ወይም\n\n"
+            f"👉 @{BOT_USERNAME} ተጭነው ከገቡ በኋላ\n"
+            "\"📨 ወደ ጣና ጭነት መረጃ ለመላክ\" "
+            "የሚለውን ተጭነው መልዕክት ያስቀምጡልን።\n\n"
+            "🙏 እናመሰግናለን!"
+        )
+    else:
+        owner_msg = (
+            "ውድ ደንበኛችን፣\n\n"
+            "የለጠፉትን ጭነት የሚወስድ ደንበኛ አግኝተናል!\n\n"
+            "እባክዎ መልዕክቱን እንዳዩ በሚከተሉት ቁጥሮች ይደውሉ፦\n\n"
+            f"📞 {SUPPORT_PHONE}\n"
+            f"📞 {SUPPORT_PHONE_2}\n\n"
+            "ወይም\n\n"
+            f"👉 @{BOT_USERNAME} ተጭነው ከገቡ በኋላ\n"
+            "\"📨 ወደ ጣና ጭነት መረጃ ለመላክ\" "
+            "የሚለውን ተጭነው መልዕክት ያስቀምጡልን።\n\n"
+            "🙏 እናመሰግናለን!"
+        )
+
+    try:
+        await context.bot.send_message(chat_id=owner_id, text=owner_msg)
+    except Exception:
+        pass
+
+# ==================================================
+# ADMIN X DELETE (Super Admin ብቻ)
+# ==================================================
 
 async def admin_x_delete(update, context):
     query = update.callback_query
@@ -1089,19 +1156,36 @@ async def admin_x_delete(update, context):
     )
 
 # ==================================================
+# ADMIN CLEAR (ማሳወቂያ ብቻ ማጥፋት)
+# ==================================================
+
+async def admin_clear_notification(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(update.effective_user.id):
+        await query.answer("❌ Admin ብቻ።", show_alert=True)
+        return
+
+    try:
+        await query.delete_message()
+    except Exception:
+        try:
+            await query.edit_message_text("🗑️ ማሳወቂያው ጸድቷል።")
+        except Exception:
+            pass
+# ==================================================
 # GET NEGOTIATION INDEX
 # ==================================================
 
 def get_negotiation_index(user_id):
     user = users.get(user_id, {})
     saved = user.get("negotiation_request")
-
     if saved is not None and 0 <= saved < len(connection_requests):
         req = connection_requests[saved]
         if (req["status"] == "negotiating"
             and (req["requester_id"] == user_id or other_party_id(req) == user_id)):
             return saved
-
     for i in range(len(connection_requests) - 1, -1, -1):
         req = connection_requests[i]
         if (req["status"] == "negotiating"
@@ -1116,7 +1200,6 @@ def get_negotiation_index(user_id):
 async def submit_price(update, context):
     user_id = update.effective_user.id
     active_index = get_negotiation_index(user_id)
-
     if active_index is None:
         return
 
@@ -1196,10 +1279,8 @@ async def agree_price(update, context):
     parts = query.data.split("_")
     if len(parts) != 3:
         return
-
     index = int(parts[1])
     button_version = int(parts[2])
-
     if index < 0 or index >= len(connection_requests):
         return
 
@@ -1236,7 +1317,7 @@ async def agree_price(update, context):
             return
         req["other_confirmed"] = True
 
-    # BOTH AGREED
+    # ሁለቱም ተስማሙ
     if req["requester_confirmed"] and req["other_confirmed"]:
         req["final_price"] = price
         req["status"] = "awaiting_payment"
@@ -1247,14 +1328,10 @@ async def agree_price(update, context):
                 users[uid]["payment_request"] = index
 
         negotiation_timeouts.pop(index, None)
-
-        if price is not None:
-            each_side = price * 0.01
-        else:
-            each_side = 0
+        each_side = price * 0.01 if price is not None else 0
 
         await query.edit_message_text(
-            f"🎉 **Congratulations!** 🎉\n\n"
+            "🎉 **Congratulations!** 🎉\n\n"
             "✅ ሁለታችሁም ተስማምታችኋል!\n\n"
             f"💰 የመጨረሻ ዋጋ፦ {price_display}\n\n"
             f"📌 ከእያንዳንዱ ወገን 1%፦ {each_side:,.2f} ብር\n\n"
@@ -1278,7 +1355,7 @@ async def agree_price(update, context):
                 pass
         return
 
-    # ONE AGREED
+    # አንዱ ተስማምቷል
     other_user = (other_party_id(req) if user_id == req["requester_id"]
                   else req["requester_id"])
     buttons = [
@@ -1292,7 +1369,9 @@ async def agree_price(update, context):
         )],
     ]
 
-    await query.edit_message_text(f"✅ {price_display} ላይ ተስማምተዋል።\n\n⏳ የሌላኛውን ወገን ምላሽ ይጠብቁ።")
+    await query.edit_message_text(
+        f"✅ {price_display} ላይ ተስማምተዋል።\n\n⏳ የሌላኛውን ወገን ምላሽ ይጠብቁ።"
+    )
 
     try:
         await context.bot.send_message(
@@ -1319,7 +1398,6 @@ async def reject_price_button(update, context):
     parts = query.data.split("_")
     if len(parts) != 3:
         return
-
     index = int(parts[1])
     button_version = int(parts[2])
     if index < 0 or index >= len(connection_requests):
@@ -1361,13 +1439,11 @@ async def reject_price_button(update, context):
 def get_payment_index(user_id):
     user = users.get(user_id, {})
     saved = user.get("payment_request")
-
     if saved is not None and 0 <= saved < len(connection_requests):
         req = connection_requests[saved]
         if (req["status"] == "awaiting_payment"
             and (req["requester_id"] == user_id or other_party_id(req) == user_id)):
             return saved
-
     for i in range(len(connection_requests) - 1, -1, -1):
         req = connection_requests[i]
         if (req["status"] == "awaiting_payment"
@@ -1400,8 +1476,7 @@ async def receipt_message(update, context):
     req["status"] = "awaiting_payment"
 
     await update.message.reply_text(
-        "🧾 የክፍያ Receipt ተቀብለናል።\n\n"
-        "⏳ Admin ይመረምራል።"
+        "🧾 የክፍያ Receipt ተቀብለናል።\n\n⏳ Admin ይመረምራል።"
     )
 
     await send_admin_payment_request(
@@ -1429,7 +1504,9 @@ async def receipt_photo(update, context):
     req[f"{side}_receipt_photo"] = file_id
     req["status"] = "awaiting_payment"
 
-    await update.message.reply_text("🧾 የክፍያ Screenshot ተቀብለናል።\n\n⏳ Admin ይመረምራል።")
+    await update.message.reply_text(
+        "🧾 የክፍያ Screenshot ተቀብለናል።\n\n⏳ Admin ይመረምራል።"
+    )
 
     await send_admin_payment_request(
         context, index, side, user_id,
@@ -1512,7 +1589,6 @@ async def admin_payment_action(update, context):
     action, index, side, button_version = (
         parts[0], int(parts[1]), parts[2], int(parts[3])
     )
-
     if index < 0 or index >= len(connection_requests):
         return
 
@@ -1534,7 +1610,6 @@ async def admin_payment_action(update, context):
     if action == "adminapprove":
         req[f"{side}_payment_approved"] = True
         req[f"{side}_payment_rejected"] = False
-
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
@@ -1660,8 +1735,8 @@ async def show_connection_requests(update, context):
     if not is_admin(user_id):
         await update.message.reply_text(
             "📨 **ወደ ጣና ጭነት መረጃ ለመላክ**\n\n"
-            "ማንኛውም መረጃ ለማስተላለፍ ወይም "
-            "ለማሳወቅ ከፈለጉ መልዕክትዎን ይጻፉ።\n\n"
+            "ማንኛውም መረጃ ለማስተላለፍ ወይም ለማሳወቅ "
+            "መልዕክትዎን ይጻፉ።\n\n"
             "📌 Admin ወይም Super Admin ብቻ ያየዋል።",
             reply_markup=main_menu(user_id)
         )
@@ -1671,7 +1746,8 @@ async def show_connection_requests(update, context):
     received = []
     for i, req in enumerate(connection_requests):
         if other_party_id(req) == user_id or req["requester_id"] == user_id:
-            received.append((i, req))
+            if req["status"] not in ["deleted"]:
+                received.append((i, req))
 
     if not received:
         await update.message.reply_text(
@@ -1687,20 +1763,21 @@ async def show_connection_requests(update, context):
         if req.get("type") == "truck":
             truck = truck_posts[req["truck_index"]]
             text += (
-                f"📥 #{i + 1}\n🚛 {truck['type']}\n"
+                f"📥 #{i + 1}\n"
+                f"🚛 {truck['type']}\n"
                 f"👤 {req['requester_name']}\n"
                 f"📌 {req['status']}\n\n"
             )
         else:
             cargo = cargo_posts[req["cargo_index"]]
             text += (
-                f"📥 #{i + 1}\n📍 {cargo['from']} ➡️ {cargo['to']}\n"
+                f"📥 #{i + 1}\n"
+                f"📍 {cargo['from']} ➡️ {cargo['to']}\n"
                 f"📦 {cargo['type']}\n"
                 f"👤 {req['requester_name']}\n"
                 f"📌 {req['status']}\n\n"
             )
 
-    # Super Admin ማጥፊያ ቁልፎች
     if is_super_admin(user_id):
         for i, req in received:
             buttons.append([
@@ -1760,7 +1837,6 @@ async def handle_user_message(update, context):
         reply_markup=main_menu(user_id)
     )
     context.user_data.pop("sending_admin_message", None)
-    return ConversationHandler.END
 
 # ==================================================
 # OWNER REGISTRATION
@@ -1868,8 +1944,8 @@ async def support_start(update, context):
     await update.message.reply_text(
         "📞 TANA CARGO የጣና ጭነት እገዛ\n\n"
         "ለእገዛ ለማግኘት @tanapage ይጠቀሙ።\n\n"
-        "☎️ 0960011010\n"
-        "☎️ 0912991128\n\n"
+        f"☎️ {SUPPORT_PHONE}\n"
+        f"☎️ {SUPPORT_PHONE_2}\n\n"
         "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።",
         reply_markup=main_menu(update.effective_user.id)
     )
@@ -2041,17 +2117,14 @@ def start_health_server():
 async def check_negotiation_timeouts(context):
     now = datetime.now()
     expired = []
-
     for req_index, started_at in list(negotiation_timeouts.items()):
         if req_index < 0 or req_index >= len(connection_requests):
             negotiation_timeouts.pop(req_index, None)
             continue
-
         req = connection_requests[req_index]
         if req.get("status") != "negotiating":
             negotiation_timeouts.pop(req_index, None)
             continue
-
         if (now - started_at).total_seconds() >= NEGOTIATION_TIMEOUT_SECONDS:
             expired.append(req_index)
 
@@ -2126,9 +2199,6 @@ async def clean_expired_posts(context):
         except Exception:
             pass
 
-    if expired_cargos or expired_trucks:
-        print(f"🧹 Cleaned {len(expired_cargos)} cargos, {len(expired_trucks)} trucks")
-
 # ==================================================
 # MAIN
 # ==================================================
@@ -2140,7 +2210,7 @@ def main():
     if os.path.exists(DB_PATH):
         try:
             os.remove(DB_PATH)
-            print(f"🗑️ አሮጌው ዳታቤዝ ተሰርዟል!")
+            print("🗑️ አሮጌው ዳታቤዝ ተሰርዟል!")
         except Exception as e:
             print(f"⚠️ {e}")
 
@@ -2218,9 +2288,10 @@ def main():
     application.add_handler(CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"))
     application.add_handler(CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"))
 
-    # Admin right/X
+    # Admin right/X/Clear
     application.add_handler(CallbackQueryHandler(admin_right_confirm, pattern=r"^adminright_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_x_delete, pattern=r"^adminxdelete_\d+$"))
+    application.add_handler(CallbackQueryHandler(admin_clear_notification, pattern=r"^adminclear_\d+$"))
 
     # Negotiation buttons
     application.add_handler(CallbackQueryHandler(agree_price, pattern=r"^agreeprice_\d+_\d+$"))
