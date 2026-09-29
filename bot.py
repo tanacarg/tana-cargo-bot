@@ -215,16 +215,6 @@ def main_menu():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-def admin_main_menu():
-    keyboard = [
-        ["📊 የአድሚን ዳሽቦርድ", "🤝 የግንኙነት ጥያቄዎች"],
-        ["👥 ተጠቃሚዎች", "📦 ጭነቶች"],
-        ["🚛 መኪኖች", "🗑️ የተሰረዙ መዝገቦች"],
-        ["⬅️ ወደ ዋና ሜኑ"],
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-
 # ==================================================
 # KEYBOARDS
 # ==================================================
@@ -472,6 +462,8 @@ def notification_text_truck(truck):
         "የ Right (✅) ምልክቷን ነክተው የዋጋ ድርድር ይጀምሩ።\n\n"
         "Notification @tanacargo ግን አክቲቭ መሆን አለበት።"
     )
+
+
 # ==================================================
 # CARGO POSTING
 # ==================================================
@@ -641,9 +633,7 @@ async def cargo_date(update, context):
     context.user_data["cargo"]["date_et"] = et_date
     context.user_data["cargo"]["date_gc"] = gc_date
 
-    # Calculate expiry date (72 hours after loading date)
     try:
-        # Use GC date for expiry calculation
         gc_date_obj = datetime.strptime(gc_date, "%d/%m/%Y")
         expiry_date = gc_date_obj + timedelta(hours=CARGO_EXPIRY_HOURS)
         context.user_data["cargo"]["expiry_date"] = expiry_date.isoformat()
@@ -758,6 +748,8 @@ async def cargo_price(update, context):
                 pass
 
     return ConversationHandler.END
+
+
 # ==================================================
 # TRUCK REGISTRATION
 # ==================================================
@@ -861,7 +853,6 @@ async def truck_phone(update, context):
     truck["active"] = True
     truck["timestamp"] = datetime.now().isoformat()
 
-    # Set expiry date to 72 hours from now for trucks
     expiry_date = datetime.now() + timedelta(hours=CARGO_EXPIRY_HOURS)
     truck["expiry_date"] = expiry_date.isoformat()
 
@@ -904,7 +895,6 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
-
 
 # ==================================================
 # FIND CARGO
@@ -1014,6 +1004,8 @@ async def find_truck(update, context):
         message,
         reply_markup=InlineKeyboardMarkup(buttons)
     )
+
+
 # ==================================================
 # CONNECTION REQUEST - CARGO
 # ==================================================
@@ -1552,7 +1544,6 @@ async def admin_delete_connection(update, context):
     if index < 0 or index >= len(connection_requests):
         return
 
-    # Mark as deleted instead of removing to avoid index issues
     connection_requests[index]["status"] = "deleted"
 
     await query.edit_message_text(
@@ -1975,6 +1966,8 @@ async def counter_price_button(update, context):
         "💬 አዲስ ዋጋ ይጻፉ።\n"
         "ምሳሌ፦ 55000 ወይም በስምምነት"
     )
+
+
 # ==================================================
 # OWNER REGISTRATION
 # ==================================================
@@ -2746,7 +2739,6 @@ async def clean_expired_posts(context):
             except Exception:
                 pass
 
-    # Mark expired cargos as inactive
     for i in expired_cargos:
         cargo_posts[i]["active"] = False
         try:
@@ -2764,7 +2756,6 @@ async def clean_expired_posts(context):
         except Exception:
             pass
 
-    # Mark expired trucks as inactive
     for i in expired_trucks:
         truck_posts[i]["active"] = False
         try:
@@ -3102,6 +3093,16 @@ def start_health_server():
 def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing.")
+
+    # ==================================================
+    # DELETE OLD DATABASE ON STARTUP
+    # ==================================================
+    if os.path.exists(DB_PATH):
+        try:
+            os.remove(DB_PATH)
+            print(f"🗑️ አሮጌው ዳታቤዝ ({DB_PATH}) ተሰርዟል!")
+        except Exception as e:
+            print(f"⚠️ ዳታቤዙን ማጥፋት አልተቻለም: {e}")
 
     try:
         init_db()
@@ -3621,7 +3622,7 @@ def main():
 
         application.job_queue.run_repeating(
             clean_expired_posts,
-            interval=3600,  # every hour
+            interval=3600,
             first=60
         )
         print("✅ Expiry cleaner started (every 1 hour)")
