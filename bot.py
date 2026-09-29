@@ -749,7 +749,6 @@ async def cargo_price(update, context):
 
     return ConversationHandler.END
 
-
 # ==================================================
 # TRUCK REGISTRATION
 # ==================================================
@@ -895,6 +894,7 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
+
 
 # ==================================================
 # FIND CARGO
@@ -2860,38 +2860,16 @@ async def profile(update, context):
 
 
 # ==================================================
-# SUPPORT
+# SUPPORT (FIXED - NO tel: URL)
 # ==================================================
 
 async def support_start(update, context):
-    buttons = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "💬 @tanapage ክፈት",
-                url=SUPPORT_URL
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "☎️ 0960011010 ይደውሉ",
-                url="tel:" + SUPPORT_PHONE
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "☎️ 0912991128 ይደውሉ",
-                url="tel:" + SUPPORT_PHONE_2
-            )
-        ],
-    ])
-
     await update.message.reply_text(
         "📞 TANA CARGO የጣና ጭነት እገዛ\n\n"
-        "ለእገዛ ለማግኘት @tanapage ይጫኑ።\n\n"
+        "ለእገዛ ለማግኘት @tanapage ይጠቀሙ።\n\n"
         "☎️ 0960011010\n"
         "☎️ 0912991128\n\n"
-        "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።",
-        reply_markup=buttons
+        "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።"
     )
     return ConversationHandler.END
 
@@ -3094,9 +3072,7 @@ def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing.")
 
-    # ==================================================
     # DELETE OLD DATABASE ON STARTUP
-    # ==================================================
     if os.path.exists(DB_PATH):
         try:
             os.remove(DB_PATH)
