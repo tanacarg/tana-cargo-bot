@@ -41,6 +41,7 @@ TELEBIRR = os.getenv("TELEBIRR", "")
 
 NEGOTIATION_TIMEOUT_SECONDS = 300
 CONVERSATION_TIMEOUT_SECONDS = 600
+CARGO_EXPIRY_HOURS = 72
 
 
 # ==================================================
@@ -80,7 +81,8 @@ def init_db():
             price_display TEXT,
             price_status TEXT,
             active INTEGER DEFAULT 1,
-            timestamp TEXT
+            timestamp TEXT,
+            expiry_date TEXT
         )
     """)
     cursor.execute("""
@@ -95,7 +97,8 @@ def init_db():
             driver TEXT,
             phone TEXT,
             active INTEGER DEFAULT 1,
-            timestamp TEXT
+            timestamp TEXT,
+            expiry_date TEXT
         )
     """)
     conn.commit()
@@ -125,14 +128,14 @@ def db_save_cargo(cargo):
         INSERT INTO cargo_posts (
             user_id, from_location, to_location, cargo_type, vehicle,
             size, size_name, weight, date_et, date_gc, phone, price,
-            price_display, price_status, active, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            price_display, price_status, active, timestamp, expiry_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         cargo["user_id"], cargo["from"], cargo["to"], cargo["type"],
         cargo["vehicle"], cargo["size"], cargo["size_name"], cargo["weight"],
         cargo.get("date_et", ""), cargo.get("date_gc", ""), cargo["phone"],
         cargo["price"], cargo["price_display"], cargo["price_status"],
-        1, cargo["timestamp"]
+        1, cargo["timestamp"], cargo.get("expiry_date", "")
     ))
     conn.commit()
     conn.close()
@@ -144,12 +147,12 @@ def db_save_truck(truck):
     cursor.execute("""
         INSERT INTO truck_posts (
             user_id, truck_type, plate, capacity, route, address,
-            driver, phone, active, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            driver, phone, active, timestamp, expiry_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         truck["user_id"], truck["type"], truck["plate"], truck["capacity"],
         truck["route"], truck["address"], truck["driver"], truck["phone"],
-        1, truck["timestamp"]
+        1, truck["timestamp"], truck.get("expiry_date", "")
     ))
     conn.commit()
     conn.close()
@@ -194,6 +197,8 @@ negotiation_timeouts = {}
 ) = range(10, 17)
 
 OWNER_NAME, OWNER_PHONE = range(17, 19)
+
+
 # ==================================================
 # MAIN MENU
 # ==================================================
@@ -206,6 +211,16 @@ def main_menu():
         ["🤝 ግንኙነት ጥያቄዎች"],
         ["💳 የአገልግሎት ክፍያ ለመፈፀም"],
         ["📞 Support", "ℹ️ About"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
+def admin_main_menu():
+    keyboard = [
+        ["📊 የአድሚን ዳሽቦርድ", "🤝 የግንኙነት ጥያቄዎች"],
+        ["👥 ተጠቃሚዎች", "📦 ጭነቶች"],
+        ["🚛 መኪኖች", "🗑️ የተሰረዙ መዝገቦች"],
+        ["⬅️ ወደ ዋና ሜኑ"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -437,6 +452,26 @@ def timeout_warning_text():
         "እናሳውቅዎታለን።\n\n"
         "🙏 ስለትዕግስትዎ እናመሰግናለን።"
     )
+
+
+def notification_text_cargo(cargo):
+    return (
+        "ጭነትዎን / የጭነት መኪናዎን የፈለገ ደንበኛ መስመር ላይ ነው።\n\n"
+        "እባክዎን ይህንን ተጭነው 👉 @tanacargo ውስጥ በመግባት "
+        "\"የርሶ ግንኙነት\" ወደሚለው ውስጥ ይግቡና "
+        "የ Right (✅) ምልክቷን ነክተው የዋጋ ድርድር ይጀምሩ።\n\n"
+        "Notification @tanacargo ግን አክቲቭ መሆን አለበት።"
+    )
+
+
+def notification_text_truck(truck):
+    return (
+        "የጭነት መኪናዎን የፈለገ ደንበኛ መስመር ላይ ነው።\n\n"
+        "እባክዎን ይህንን ተጭነው 👉 @tanacargo ውስጥ በመግባት "
+        "\"የርሶ ግንኙነት\" ወደሚለው ውስጥ ይግቡና "
+        "የ Right (✅) ምልክቷን ነክተው የዋጋ ድርድር ይጀምሩ።\n\n"
+        "Notification @tanacargo ግን አክቲቭ መሆን አለበት።"
+    )
 # ==================================================
 # CARGO POSTING
 # ==================================================
@@ -605,6 +640,15 @@ async def cargo_date(update, context):
     context.user_data["cargo"]["date"] = date_text
     context.user_data["cargo"]["date_et"] = et_date
     context.user_data["cargo"]["date_gc"] = gc_date
+
+    # Calculate expiry date (72 hours after loading date)
+    try:
+        # Use GC date for expiry calculation
+        gc_date_obj = datetime.strptime(gc_date, "%d/%m/%Y")
+        expiry_date = gc_date_obj + timedelta(hours=CARGO_EXPIRY_HOURS)
+        context.user_data["cargo"]["expiry_date"] = expiry_date.isoformat()
+    except Exception:
+        context.user_data["cargo"]["expiry_date"] = ""
 
     await update.message.reply_text(
         f"📅 የተመረጠው ቀን፦\n"
@@ -817,6 +861,10 @@ async def truck_phone(update, context):
     truck["active"] = True
     truck["timestamp"] = datetime.now().isoformat()
 
+    # Set expiry date to 72 hours from now for trucks
+    expiry_date = datetime.now() + timedelta(hours=CARGO_EXPIRY_HOURS)
+    truck["expiry_date"] = expiry_date.isoformat()
+
     truck_posts.append(truck.copy())
 
     try:
@@ -856,6 +904,8 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
+
+
 # ==================================================
 # FIND CARGO
 # ==================================================
@@ -1420,6 +1470,97 @@ async def show_connection_requests(update, context):
 
 
 # ==================================================
+# ADMIN CONNECTION REQUESTS
+# ==================================================
+
+async def admin_connection_requests(update, context):
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Admin ብቻ ይህን ማየት ይችላል።")
+        return
+
+    if not connection_requests:
+        await update.message.reply_text("ℹ️ እስካሁን የግንኙነት ጥያቄ የለም።")
+        return
+
+    text = "🤝 የአድሚን የግንኙነት ጥያቄዎች\n"
+    text += "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    buttons = []
+
+    for i, req in enumerate(connection_requests):
+        if req["status"] == "completed":
+            status_icon = "✅"
+        elif req["status"] in ["pending", "negotiating"]:
+            status_icon = "⏳"
+        elif req["status"] == "rejected":
+            status_icon = "❌"
+        elif req["status"] == "awaiting_payment":
+            status_icon = "💳"
+        else:
+            status_icon = "📌"
+
+        if req.get("type") == "truck":
+            truck = truck_posts[req["truck_index"]]
+            text += (
+                f"{status_icon} #{i + 1}\n"
+                f"🚛 {truck['type']}\n"
+                f"📍 {truck.get('address', 'N/A')} ➡️ "
+                f"{truck.get('route', 'N/A')}\n"
+                f"👤 ጠያቂ፦ {req['requester_name']}\n"
+                f"👤 ባለቤት፦ {users.get(req['truck_owner_id'], {}).get('name', 'N/A')}\n"
+                f"📌 ሁኔታ፦ {req['status']}\n"
+                f"💰 ዋጋ፦ {req.get('final_price', 0):,.2f} ብር\n\n"
+            )
+        else:
+            cargo = cargo_posts[req["cargo_index"]]
+            text += (
+                f"{status_icon} #{i + 1}\n"
+                f"📍 {cargo['from']} ➡️ {cargo['to']}\n"
+                f"📦 {cargo['type']}\n"
+                f"👤 ጠያቂ፦ {req['requester_name']}\n"
+                f"👤 ባለቤት፦ {users.get(req['cargo_owner_id'], {}).get('name', 'N/A')}\n"
+                f"📌 ሁኔታ፦ {req['status']}\n"
+                f"💰 ዋጋ፦ {req.get('final_price', 0):,.2f} ብር\n\n"
+            )
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"🗑️ አጥፋ #{i + 1}",
+                callback_data=f"admindeleteconnection_{i}"
+            )
+        ])
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def admin_delete_connection(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(update.effective_user.id):
+        await query.answer("❌ Admin ብቻ።", show_alert=True)
+        return
+
+    try:
+        index = int(query.data.split("_")[-1])
+    except ValueError:
+        return
+
+    if index < 0 or index >= len(connection_requests):
+        return
+
+    # Mark as deleted instead of removing to avoid index issues
+    connection_requests[index]["status"] = "deleted"
+
+    await query.edit_message_text(
+        "✅ የግንኙነት ጥያቄው ተሰርዟል።"
+    )
+
+
+# ==================================================
 # GET NEGOTIATION INDEX
 # ==================================================
 
@@ -1516,14 +1657,14 @@ async def submit_price(update, context):
     buttons = [
         [
             InlineKeyboardButton(
-                f"✔️ ተስማማለሁ {price_display}",
+                f"✅ ተስማማለሁ {price_display}",
                 callback_data=f"agreeprice_{active_index}_{version}"
             )
         ],
         [
             InlineKeyboardButton(
-                "💬 ሌላ ዋጋ ላክ",
-                callback_data=f"counterprice_{active_index}_{version}"
+                "❌ አልስማማሁም",
+                callback_data=f"rejectprice_{active_index}_{version}"
             )
         ],
     ]
@@ -1536,8 +1677,8 @@ async def submit_price(update, context):
             text=(
                 "💰 አዲስ የዋጋ ጥያቄ መጥቷል።\n\n"
                 f"💵 የቀረበው ዋጋ፦ {price_display}\n\n"
-                "ከዚህ ዋጋ ጋር ከተስማሙ ✔️ ይጫኑ።\n"
-                "ወይም 💬 ሌላ ዋጋ ያቅርቡ።"
+                "ከዚህ ዋጋ ጋር ከተስማሙ ✅ ይጫኑ።\n"
+                "ወይም ❌ አልስማማሁም ይጫኑ።"
             ),
             reply_markup=InlineKeyboardMarkup(buttons)
         )
@@ -1679,7 +1820,7 @@ async def agree_price(update, context):
     buttons = [
         [
             InlineKeyboardButton(
-                f"✔️ እኔም እስማማለሁ {price_display}",
+                f"✅ እኔም እስማማለሁ {price_display}",
                 callback_data=f"agreeprice_{index}_{current_version}"
             )
         ],
@@ -1703,10 +1844,71 @@ async def agree_price(update, context):
                 "🤝 የዋጋ ስምምነት ማረጋገጫ\n\n"
                 f"💰 {price_display}\n\n"
                 "ሌላኛው ወገን በዚህ ዋጋ ተስማምቷል።\n"
-                "እርስዎም ከተስማሙ ✔️ ይጫኑ።\n"
+                "እርስዎም ከተስማሙ ✅ ይጫኑ።\n"
                 "ወይም ❌ አልስማማሁም ይጫኑ።"
             ),
             reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    except Exception:
+        pass
+
+
+# ==================================================
+# REJECT PRICE
+# ==================================================
+
+async def reject_price_button(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split("_")
+
+    if len(parts) != 3:
+        return
+
+    index = int(parts[1])
+    button_version = int(parts[2])
+
+    if index < 0 or index >= len(connection_requests):
+        return
+
+    req = connection_requests[index]
+
+    if button_version != req.get("offer_version", 0):
+        await query.answer("⚠️ ይህ የድሮ ዋጋ ነው።", show_alert=True)
+        return
+
+    user_id = update.effective_user.id
+
+    if (
+        user_id != req["requester_id"]
+        and user_id != other_party_id(req)
+    ):
+        await query.answer("❌ የእርስዎ ድርድር አይደለም።", show_alert=True)
+        return
+
+    req["requester_confirmed"] = False
+    req["other_confirmed"] = False
+    req["final_price"] = None
+
+    await query.edit_message_text(
+        "❌ አልተስማማሁም ብለዋል።\n\n"
+        "💬 አዲስ ዋጋ ለማቅረብ ይጻፉ።"
+    )
+
+    other_user = (
+        other_party_id(req)
+        if user_id == req["requester_id"]
+        else req["requester_id"]
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=other_user,
+            text=(
+                "❌ ሌላኛው ወገን በዚህ ዋጋ አልተስማማም።\n\n"
+                "💬 አዲስ ዋጋ ያቅርቡ።"
+            )
         )
     except Exception:
         pass
@@ -1773,67 +1975,6 @@ async def counter_price_button(update, context):
         "💬 አዲስ ዋጋ ይጻፉ።\n"
         "ምሳሌ፦ 55000 ወይም በስምምነት"
     )
-
-
-# ==================================================
-# REJECT PRICE
-# ==================================================
-
-async def reject_price_button(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    parts = query.data.split("_")
-
-    if len(parts) != 3:
-        return
-
-    index = int(parts[1])
-    button_version = int(parts[2])
-
-    if index < 0 or index >= len(connection_requests):
-        return
-
-    req = connection_requests[index]
-
-    if button_version != req.get("offer_version", 0):
-        await query.answer("⚠️ ይህ የድሮ ዋጋ ነው።", show_alert=True)
-        return
-
-    user_id = update.effective_user.id
-
-    if (
-        user_id != req["requester_id"]
-        and user_id != other_party_id(req)
-    ):
-        await query.answer("❌ የእርስዎ ድርድር አይደለም።", show_alert=True)
-        return
-
-    req["requester_confirmed"] = False
-    req["other_confirmed"] = False
-    req["final_price"] = None
-
-    await query.edit_message_text(
-        "❌ አልተስማማሁም ብለዋል።\n\n"
-        "💬 አዲስ ዋጋ ለማቅረብ ይጻፉ።"
-    )
-
-    other_user = (
-        other_party_id(req)
-        if user_id == req["requester_id"]
-        else req["requester_id"]
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=other_user,
-            text=(
-                "❌ ሌላኛው ወገን በዚህ ዋጋ አልተስማማም።\n\n"
-                "💬 አዲስ ዋጋ ያቅርቡ።"
-            )
-        )
-    except Exception:
-        pass
 # ==================================================
 # OWNER REGISTRATION
 # ==================================================
@@ -2570,6 +2711,84 @@ async def check_negotiation_timeouts(context):
                 pass
 
         negotiation_timeouts[req_index] = now
+
+
+# ==================================================
+# EXPIRED CARGO/TRUCK CLEANER (72 HOURS)
+# ==================================================
+
+async def clean_expired_posts(context):
+    now = datetime.now()
+    expired_cargos = []
+    expired_trucks = []
+
+    for i, cargo in enumerate(cargo_posts):
+        if not cargo.get("active", True):
+            continue
+        expiry_date = cargo.get("expiry_date")
+        if expiry_date:
+            try:
+                expiry = datetime.fromisoformat(expiry_date)
+                if now >= expiry:
+                    expired_cargos.append(i)
+            except Exception:
+                pass
+
+    for i, truck in enumerate(truck_posts):
+        if not truck.get("active", True):
+            continue
+        expiry_date = truck.get("expiry_date")
+        if expiry_date:
+            try:
+                expiry = datetime.fromisoformat(expiry_date)
+                if now >= expiry:
+                    expired_trucks.append(i)
+            except Exception:
+                pass
+
+    # Mark expired cargos as inactive
+    for i in expired_cargos:
+        cargo_posts[i]["active"] = False
+        try:
+            await context.bot.send_message(
+                chat_id=cargo_posts[i]["user_id"],
+                text=(
+                    "⏰ TANA CARGO — የጭነት ጊዜ ገደብ\n\n"
+                    f"📍 {cargo_posts[i]['from']} ➡️ {cargo_posts[i]['to']}\n"
+                    f"📦 {cargo_posts[i]['type']}\n\n"
+                    "የመጫኛ ቀኑ ካለፈ 72 ሰዓት ስለሞላ "
+                    "ጭነትዎ ከፍርግርግ ዝርዝር ተወግዷል።\n\n"
+                    "🔄 አዲስ ጭነት ለመመዝገብ እንኳን ደህና መጡ።"
+                )
+            )
+        except Exception:
+            pass
+
+    # Mark expired trucks as inactive
+    for i in expired_trucks:
+        truck_posts[i]["active"] = False
+        try:
+            await context.bot.send_message(
+                chat_id=truck_posts[i]["user_id"],
+                text=(
+                    "⏰ TANA CARGO — የመኪና ጊዜ ገደብ\n\n"
+                    f"🚛 {truck_posts[i]['type']}\n"
+                    f"📍 {truck_posts[i].get('address', 'N/A')}\n\n"
+                    "የመኪናዎ ምዝገባ ጊዜ ካለፈ 72 ሰዓት ስለሞላ "
+                    "ከፍርግርግ ዝርዝር ተወግዷል።\n\n"
+                    "🔄 እንደገና ለመመዝገብ እንኳን ደህና መጡ።"
+                )
+            )
+        except Exception:
+            pass
+
+    if expired_cargos or expired_trucks:
+        print(
+            f"🧹 Cleaned {len(expired_cargos)} expired cargos "
+            f"and {len(expired_trucks)} expired trucks"
+        )
+
+
 # ==================================================
 # START
 # ==================================================
@@ -2909,6 +3128,9 @@ def main():
     application.add_handler(CommandHandler("owner", owner_start))
     application.add_handler(
         CommandHandler("connections", show_connection_requests)
+    )
+    application.add_handler(
+        CommandHandler("adminconnections", admin_connection_requests)
     )
 
     # ==================================================
@@ -3279,6 +3501,12 @@ def main():
             pattern=r"^admindeleteuser_\d+$"
         )
     )
+    application.add_handler(
+        CallbackQueryHandler(
+            admin_delete_connection,
+            pattern=r"^admindeleteconnection_\d+$"
+        )
+    )
 
     # ==================================================
     # CONNECTION BUTTONS
@@ -3380,7 +3608,7 @@ def main():
     )
 
     # ==================================================
-    # JOB QUEUE — TIMEOUT CHECKER
+    # JOB QUEUE — TIMEOUT CHECKER & EXPIRY CLEANER
     # ==================================================
 
     if application.job_queue:
@@ -3390,6 +3618,13 @@ def main():
             first=10
         )
         print("✅ Timeout checker started (every 30s)")
+
+        application.job_queue.run_repeating(
+            clean_expired_posts,
+            interval=3600,  # every hour
+            first=60
+        )
+        print("✅ Expiry cleaner started (every 1 hour)")
     else:
         print("⚠️ JobQueue not available")
 
