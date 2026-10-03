@@ -1,4 +1,5 @@
 import os
+import asyncio
 import threading
 import sqlite3
 from datetime import datetime, timedelta
@@ -272,9 +273,7 @@ def validate_weight(weight):
     return True, ""
 
 def parse_flexible_date(date_text):
-    """ቀንን በተለያየ መለያ (/, -, ,) ለመቀበል"""
     raw = date_text.strip()
-    # መለያዎችን ወደ / ቀይር
     for sep in ["-", ",", ".", " "]:
         raw = raw.replace(sep, "/")
     parts = raw.split("/")
@@ -299,7 +298,6 @@ def parse_flexible_date(date_text):
     return date_obj, ""
 
 def convert_calendar(date_obj, calendar):
-    """ከ ET ወደ GC ወይም ከ GC ወደ ET መቀየር"""
     if calendar == "ET":
         gc_year = date_obj.year + 7
         gc_month = date_obj.month + 8
@@ -333,7 +331,6 @@ def get_admin_ids():
     if ADMIN_USER_ID and str(ADMIN_USER_ID) != str(SUPER_ADMIN_USER_ID):
         ids.append(int(ADMIN_USER_ID))
     return ids
-
 # ==================================================
 # CARGO POSTING
 # ==================================================
@@ -465,7 +462,6 @@ async def cargo_date(update, context):
         await update.message.reply_text(f"❌ {error}")
         return CARGO_DATE
 
-    # ያለፈ ቀን ማረጋገጫ
     try:
         gc_obj = datetime.strptime(gc_date, "%d/%m/%Y")
     except Exception:
@@ -746,7 +742,6 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
-
 # ==================================================
 # FIND CARGO (ለደንበኞች - የባለቤት መረጃ ድብቅ)
 # ==================================================
@@ -768,7 +763,6 @@ async def find_cargo(update, context):
         cargo_id = f"{i + 1:03d}"
         price_display = cargo.get("price_display", "በስምምነት")
 
-        # ለAdmin ብቻ የባለቤት ስም/ስልክ ይታያል
         owner_line = ""
         phone_line = ""
         if is_admin_user:
@@ -826,7 +820,6 @@ async def find_truck(update, context):
         truck_id = f"{i + 1:03d}"
         route_display = truck.get("route", "N/A")
 
-        # ለAdmin ብቻ ስም/ስልክ/ታርጋ/ሹፌር ይታያል
         owner_line = ""
         phone_line = ""
         plate_line = ""
@@ -1045,7 +1038,6 @@ async def connect_phone(update, context):
         reply_markup=main_menu(requester.id)
     )
 
-    # ለ Admin/Super Admin ማሳወቂያ (1 ጊዜ ብቻ)
     await send_admin_notification(context, req_index)
 
     return ConversationHandler.END
@@ -1093,6 +1085,7 @@ async def truck_connection_request(update, context):
         "1️⃣ ሙሉ ስምዎን ይጻፉ።"
     )
     return CONNECT_NAME
+
 # ==================================================
 # SEND ADMIN NOTIFICATION (1 ጊዜ ብቻ)
 # ==================================================
@@ -1232,7 +1225,7 @@ async def admin_right_confirm(update, context):
         except Exception:
             pass
         if i == 0:
-            await asyncio.sleep(10 * 60)  # 10 ደቂቃ ልዩነት
+            await asyncio.sleep(10 * 60)
 
     # ==========================================
     # 2. ለባለቤቱ (Owner) - 2 ጊዜ ብቻ
@@ -1273,7 +1266,7 @@ async def admin_right_confirm(update, context):
         except Exception:
             pass
         if i == 0:
-            await asyncio.sleep(10 * 60)  # 10 ደቂቃ ልዩነት
+            await asyncio.sleep(10 * 60)
 
 # ==================================================
 # ADMIN X DELETE (Super Admin ብቻ)
@@ -1460,8 +1453,6 @@ async def handle_user_message(update, context):
         "📸 ፎቶም መላክ ይችላሉ!",
         reply_markup=main_menu(user_id)
     )
-    # ሁነታውን አንዘጋው - ፎቶም እንዲልኩ ፍቀድ
-    # context.user_data.pop("sending_admin_message", None)
 
 # ==================================================
 # HANDLE USER PHOTO TO ADMINS
@@ -1513,7 +1504,6 @@ async def handle_user_photo(update, context):
         "📌 ሌላ መልዕክት ወይም ፎቶ መላክ ይችላሉ።",
         reply_markup=main_menu(user_id)
     )
-
 # ==================================================
 # OWNER REGISTRATION
 # ==================================================
@@ -1870,15 +1860,9 @@ async def receipt_message(update, context):
 async def receipt_photo(update, context):
     user_id = update.effective_user.id
 
-    # ==========================================
-    # 1. ወደ Admin መልዕክት መላኪያ ሁነታ ካለ
-    # ==========================================
     if context.user_data.get("sending_admin_message"):
         return await handle_user_photo(update, context)
 
-    # ==========================================
-    # 2. የክፍያ ደረሰኝ ሁነታ
-    # ==========================================
     index = get_payment_index(user_id)
     if index is None:
         return
@@ -2179,45 +2163,6 @@ async def text_router(update, context):
     return await menu_router(update, context)
 
 # ==================================================
-# MENU INTERRUPT
-# ==================================================
-
-async def menu_interrupt(update, context):
-    text = update.message.text
-    context.user_data.clear()
-    uid = update.effective_user.id
-
-    if text == "🚚 ጭነት መለጠፍ":
-        return await cargo_start(update, context)
-    if text == "🚛 መኪና ማስመዝገብ":
-        return await truck_start(update, context)
-    if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
-        await service_payment(update, context)
-        return ConversationHandler.END
-    if text == "📞 Support":
-        return await support_start(update, context)
-    if text == "🔎 ጭነት መፈለግ":
-        await find_cargo(update, context)
-        return ConversationHandler.END
-    if text == "🚛 መኪና መፈለግ":
-        await find_truck(update, context)
-        return ConversationHandler.END
-    if text == "👤 የኔ መረጃ":
-        await profile(update, context)
-        return ConversationHandler.END
-    if text == "🤝 የግንኙነት ጥያቄዎች":
-        await show_connection_requests(update, context)
-        return ConversationHandler.END
-    if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
-        await menu_router(update, context)
-        return ConversationHandler.END
-    if text == "ℹ️ About":
-        await about(update, context)
-        return ConversationHandler.END
-
-    return ConversationHandler.END
-
-# ==================================================
 # START / PROFILE / SUPPORT / ABOUT / PAYMENT / CANCEL
 # ==================================================
 
@@ -2346,14 +2291,7 @@ def start_health_server():
     return server
 
 # ==================================================
-# EXPIRED CLEANER (72 HOURS)
-# ==================================================
-
-async def clean_expired_posts(context):
-    now = datetime.now()
-    expired_cargos = []
-# ==================================================
-# EXPIRED CLEANER (72 HOURS)
+# EXPIRED CLEANER (72 HOURS) - የተስተካከለ
 # ==================================================
 
 async def clean_expired_posts(context):
