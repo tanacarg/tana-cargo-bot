@@ -151,7 +151,7 @@ def main_menu(user_id=None):
         keyboard = [
             ["🚚 ጭነት መለጠፍ", "🔎 ጭነት መፈለግ"],
             ["🚛 መኪና ማስመዝገብ", "🚛 መኪና መፈለግ"],
-            ["👤 የኔ መረጃ", "📦 የጭነት ባለቤት ምዝገባ"],
+            ["👤 የኔ መረጃ"],
             ["🤝 የግንኙነት ጥያቄዎች"],
             ["💳 የአገልግሎት ክፍያ ለመፈፀም"],
             ["📞 Support", "ℹ️ About"],
@@ -160,7 +160,7 @@ def main_menu(user_id=None):
         keyboard = [
             ["🚚 ጭነት መለጠፍ", "🔎 ጭነት መፈለግ"],
             ["🚛 መኪና ማስመዝገብ", "🚛 መኪና መፈለግ"],
-            ["👤 የኔ መረጃ", "📦 የጭነት ባለቤት ምዝገባ"],
+            ["👤 የኔ መረጃ"],
             ["📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ"],
             ["💳 የአገልግሎት ክፍያ ለመፈፀም"],
             ["📞 Support", "ℹ️ About"],
@@ -748,7 +748,7 @@ async def truck_phone(update, context):
     return ConversationHandler.END
 
 # ==================================================
-# FIND CARGO (ለደንበኞች - የባለቤት መረጃ ድብቅ)
+# FIND CARGO
 # ==================================================
 
 async def find_cargo(update, context):
@@ -810,7 +810,7 @@ async def find_cargo(update, context):
     )
 
 # ==================================================
-# FIND TRUCK (ለደንበኞች - የባለቤት መረጃ ድብቅ)
+# FIND TRUCK
 # ==================================================
 
 async def find_truck(update, context):
@@ -2145,8 +2145,6 @@ async def menu_router(update, context):
         await find_truck(update, context); return
     if text == "👤 የኔ መረጃ":
         await profile(update, context); return
-    if text == "📦 የጭነት ባለቤት ምዝገባ":
-        return await owner_start(update, context)
     if text == "🤝 የግንኙነት ጥያቄዎች":
         await show_connection_requests(update, context); return
     if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
@@ -2202,8 +2200,6 @@ async def menu_interrupt(update, context):
         return await cargo_start(update, context)
     if text == "🚛 መኪና ማስመዝገብ":
         return await truck_start(update, context)
-    if text == "📦 የጭነት ባለቤት ምዝገባ":
-        return await owner_start(update, context)
     if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
         await service_payment(update, context)
         return ConversationHandler.END
@@ -2456,7 +2452,6 @@ def main():
         entry_points=[
             MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), cargo_start),
             MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), truck_start),
-            MessageHandler(filters.Regex(r"^📦 የጭነት ባለቤት ምዝገባ$"), owner_start),
             MessageHandler(filters.Regex(r"^📞 Support$"), support_start),
             MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), service_payment),
             MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), find_cargo),
@@ -2507,7 +2502,6 @@ def main():
             MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), menu_interrupt),
             MessageHandler(filters.Regex(r"^🚛 መኪና መፈለግ$"), menu_interrupt),
             MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), menu_interrupt),
-            MessageHandler(filters.Regex(r"^📦 የጭነት ባለቤት ምዝገባ$"), menu_interrupt),
             MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), menu_interrupt),
             MessageHandler(filters.Regex(r"^📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ$"), menu_interrupt),
             MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), menu_interrupt),
