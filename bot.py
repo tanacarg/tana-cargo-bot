@@ -152,7 +152,6 @@ brokers = []
 connection_requests = []
 negotiation_timeouts = {}
 pending_deletes = []
-cargo_calendar_pending = {}
 
 # ==================================================
 # STATES
@@ -176,6 +175,17 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
 (
     BROKER_NAME, BROKER_PHONE, BROKER_ADDRESS,
 ) = range(22, 25)
+
+# ==================================================
+# MENU REGEX (ሁሉም ምናሌዎች ለ menu_interrupt)
+# ==================================================
+
+MASTER_MENU_REGEX = (
+    r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|"
+    r"👤 የኔ መረጃ|🤝 የግንኙነት ጥያቄዎች|📋 የጭነት ደላሎች መዝገብ|"
+    r"🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ|📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ|"
+    r"💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"
+)
 
 # ==================================================
 # MENUS
@@ -292,18 +302,6 @@ def other_party_id(req):
         return req["truck_owner_id"]
     return req["cargo_owner_id"]
 
-def get_user_phone(user_id):
-    user = users.get(user_id, {})
-    if user.get("owner", {}).get("phone"):
-        return user["owner"]["phone"]
-    for cargo in reversed(cargo_posts):
-        if cargo["user_id"] == user_id:
-            return cargo.get("phone", "")
-    for truck in reversed(truck_posts):
-        if truck["user_id"] == user_id:
-            return truck.get("phone", "")
-    return ""
-
 def validate_phone(phone):
     phone = phone.strip()
     if not (phone.startswith("09") or phone.startswith("07")):
@@ -344,11 +342,6 @@ def get_admin_ids():
 # ==================================================
 # ETHIOPIAN CALENDAR
 # ==================================================
-
-ETHIOPIAN_MONTHS = [
-    "መስከረም", "ጥቅምት", "ኅዳር", "ታኅሣሥ", "ጥር", "የካቲት",
-    "መጋቢት", "ሚያዝያ", "ግንቦት", "ሰኔ", "ሐምሌ", "ነሐሴ", "ጳጉሜ"
-]
 
 def is_ethiopian_leap_year(et_year):
     return (et_year % 4) == 3
@@ -459,11 +452,6 @@ def schedule_delete(chat_id, message_id):
 
 async def send_temp_message(update, context, text, **kwargs):
     msg = await update.message.reply_text(text, **kwargs)
-    schedule_delete(msg.chat_id, msg.message_id)
-    return msg
-
-async def send_temp_message_ctx(context, chat_id, text, **kwargs):
-    msg = await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
     schedule_delete(msg.chat_id, msg.message_id)
     return msg
 
@@ -1623,7 +1611,7 @@ async def truck_connection_request(update, context):
     return CONNECT_NAME
 
 # ==================================================
-# CONNECT_NAME (ስም → ስልክ)
+# CONNECT_NAME → CONNECT_PHONE → CONNECT_TYPE
 # ==================================================
 
 async def connect_name(update, context):
@@ -1637,10 +1625,6 @@ async def connect_name(update, context):
         "ምሳሌ፦ 0912345678"
     )
     return CONNECT_PHONE
-
-# ==================================================
-# CONNECT_PHONE (ስልክ → አይነት)
-# ==================================================
 
 async def connect_phone(update, context):
     phone = update.message.text.strip()
@@ -1664,10 +1648,6 @@ async def connect_phone(update, context):
             "ምሳሌ፦ ሲሚንቶ ባህርዳር"
         )
     return CONNECT_TYPE
-
-# ==================================================
-# CONNECT_TYPE (የመጨረሻ ደረጃ)
-# ==================================================
 
 async def connect_type(update, context):
     info = context.user_data.get("connect_info", {})
@@ -2813,7 +2793,7 @@ async def share_full_information(index, context):
             pass
 
 # ==================================================
-# MENU ROUTER (Welcome + Subscribe Gate)
+# MENU ROUTER (Welcome + Subscribe)
 # ==================================================
 
 async def menu_router(update, context):
@@ -2875,6 +2855,64 @@ async def _handle_menu_action(update, context, text):
         return await support_start(update, context)
     if text == "ℹ️ About":
         await about(update, context); return
+
+# ==================================================
+# MENU INTERRUPT (በየ state ውስጥ ምናሌ ሲነካ)
+# ==================================================
+
+async def menu_interrupt(update, context):
+    """
+    ተጠቃሚው በማንኛውም state ውስጥ ሌላ ምናሌ ቢነካ
+    የአሁኑን ሂደት ሰርዞ ወደ አዲሱ ይሄዳል
+    """
+    text = update.message.text
+    context.user_data.clear()
+    uid = update.effective_user.id
+
+    # Welcome እና Subscribe ዳግም አስጀምር
+    context.user_data["welcome_shown"] = True
+    is_subscribed = await check_subscription(uid, context)
+    if is_subscribed:
+        context.user_data["subscribed"] = True
+    else:
+        await send_subscribe_gate(update, context, "ጉዳይዎን")
+        return ConversationHandler.END
+
+    # ወደ አዲሱ ጉዳይ ቀጥል
+    if text == "🚚 ጭነት መለጠፍ":
+        return await cargo_start(update, context)
+    if text == "🔎 ጭነት መፈለግ":
+        await find_cargo(update, context)
+        return ConversationHandler.END
+    if text == "🚛 መኪና ማስመዝገብ":
+        return await truck_start(update, context)
+    if text == "🚛 መኪና መፈለግ":
+        await find_truck(update, context)
+        return ConversationHandler.END
+    if text == "👤 የኔ መረጃ":
+        await profile(update, context)
+        return ConversationHandler.END
+    if text == "🤝 የግንኙነት ጥያቄዎች":
+        await show_connection_requests(update, context)
+        return ConversationHandler.END
+    if text == "📋 የጭነት ደላሎች መዝገብ":
+        await show_broker_registry(update, context)
+        return ConversationHandler.END
+    if text == "🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ":
+        return await broker_start(update, context)
+    if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
+        await menu_router(update, context)
+        return ConversationHandler.END
+    if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
+        await service_payment(update, context)
+        return ConversationHandler.END
+    if text == "📞 Support":
+        return await support_start(update, context)
+    if text == "ℹ️ About":
+        await about(update, context)
+        return ConversationHandler.END
+
+    return ConversationHandler.END
 
 # ==================================================
 # TEXT ROUTER
@@ -3130,11 +3168,11 @@ def main():
     application.add_handler(CommandHandler("broker", broker_start))
 
     # ==================================================
-    # Master Conversation (ሁሉም ምናሌዎች menu_router ያልፋሉ)
+    # Master Conversation — ሁሉም ምናሌዎች menu_router ያልፋሉ
+    # በየ state ውስጥ menu_interrupt ተጨምሯል
     # ==================================================
     master_conversation = ConversationHandler(
         entry_points=[
-            # ✅ ሁሉም ምናሌዎች በ menu_router ያልፋሉ — Welcome + Subscribe
             MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
             MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), menu_router),
             MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), menu_router),
@@ -3147,44 +3185,114 @@ def main():
             MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), menu_router),
             MessageHandler(filters.Regex(r"^📞 Support$"), menu_router),
             MessageHandler(filters.Regex(r"^ℹ️ About$"), menu_router),
-            # Commands
             CommandHandler("cargo", cargo_start),
             CommandHandler("truck", truck_start),
             CommandHandler("owner", owner_start),
             CommandHandler("broker", broker_start),
         ],
         states={
-            CARGO_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from)],
-            CARGO_TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to)],
-            CARGO_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type)],
+            CARGO_FROM: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from),
+            ],
+            CARGO_TO: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to),
+            ],
+            CARGO_TYPE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type),
+            ],
             CARGO_VEHICLE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 CallbackQueryHandler(cargo_vehicle, pattern=r"^cargo_vehicle_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_vehicle_text),
             ],
-            CARGO_SIZE: [CallbackQueryHandler(cargo_size, pattern=r"^size_")],
-            CARGO_WEIGHT: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight)],
-            CARGO_CALENDAR: [CallbackQueryHandler(cargo_calendar, pattern=r"^cal_")],
-            CARGO_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date)],
-            CARGO_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone)],
-            CARGO_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price)],
-            TRUCK_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type)],
-            TRUCK_PLATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate)],
-            TRUCK_CAPACITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity)],
+            CARGO_SIZE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                CallbackQueryHandler(cargo_size, pattern=r"^size_"),
+            ],
+            CARGO_WEIGHT: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight),
+            ],
+            CARGO_CALENDAR: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                CallbackQueryHandler(cargo_calendar, pattern=r"^cal_"),
+            ],
+            CARGO_DATE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date),
+            ],
+            CARGO_PHONE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone),
+            ],
+            CARGO_PRICE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price),
+            ],
+            TRUCK_TYPE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type),
+            ],
+            TRUCK_PLATE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate),
+            ],
+            TRUCK_CAPACITY: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity),
+            ],
             TRUCK_ROUTE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 CallbackQueryHandler(truck_route_choice, pattern=r"^route_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, truck_route),
             ],
-            TRUCK_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_address)],
-            TRUCK_DRIVER: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_driver)],
-            TRUCK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone)],
-            OWNER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name)],
-            OWNER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_phone)],
-            BROKER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, broker_name)],
-            BROKER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broker_phone)],
-            BROKER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, broker_address)],
-            CONNECT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_name)],
-            CONNECT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone)],
-            CONNECT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_type)],
+            TRUCK_ADDRESS: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_address),
+            ],
+            TRUCK_DRIVER: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_driver),
+            ],
+            TRUCK_PHONE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone),
+            ],
+            OWNER_NAME: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name),
+            ],
+            OWNER_PHONE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, owner_phone),
+            ],
+            BROKER_NAME: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_name),
+            ],
+            BROKER_PHONE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_phone),
+            ],
+            BROKER_ADDRESS: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_address),
+            ],
+            CONNECT_NAME: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_name),
+            ],
+            CONNECT_PHONE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone),
+            ],
+            CONNECT_TYPE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_type),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
