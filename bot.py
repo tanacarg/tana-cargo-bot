@@ -30,7 +30,7 @@ CHANNEL_USERNAME = "tanapage"
 NEGOTIATION_TIMEOUT_SECONDS = 300
 CONVERSATION_TIMEOUT_SECONDS = 600
 CARGO_EXPIRY_HOURS = 72
-MESSAGE_AUTO_DELETE_SECONDS = 1800  # 30 ደቂቃ
+MESSAGE_AUTO_DELETE_SECONDS = 1800
 DB_PATH = "tana_cargo.db"
 
 # ==================================================
@@ -233,7 +233,6 @@ def route_choice_keyboard():
     ])
 
 def subscribe_keyboard():
-    """የ@tanapage subscribe ቁልፍ"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "📢 @tanapage Subscribe ያድርጉ",
@@ -244,6 +243,7 @@ def subscribe_keyboard():
             callback_data="subscribed_check"
         )],
     ])
+
 # ==================================================
 # HELPERS
 # ==================================================
@@ -259,14 +259,12 @@ def vehicle_match(truck_type, requested_vehicle):
     return normalize(truck_type) == normalize(requested_vehicle)
 
 def is_broker(user_id):
-    """ተጠቃሚው የጸደቀ ደላላ ነው?"""
     for b in brokers:
         if b.get("user_id") == user_id and b.get("approved") and b.get("active"):
             return True
     return False
 
 def get_poster_label(user_id):
-    """የጭነት/መኪና ባለቤት ደላላ ወይስ ደንበኛ?"""
     if is_broker(user_id):
         return "🏷️ Broker"
     return "🏷️ Customer"
@@ -344,7 +342,7 @@ def get_admin_ids():
     return ids
 
 # ==================================================
-# ETHIOPIAN CALENDAR (ትክክለኛ)
+# ETHIOPIAN CALENDAR
 # ==================================================
 
 ETHIOPIAN_MONTHS = [
@@ -353,57 +351,29 @@ ETHIOPIAN_MONTHS = [
 ]
 
 def is_ethiopian_leap_year(et_year):
-    """የኢትዮጵያ ዘለቄታ ዓመት (ጳጉሜ 6 ቀን) — ሁሉም ዓመት ከ4 ተከፍሎ 3 ሲቀር"""
     return (et_year % 4) == 3
 
 def et_to_gc(et_year, et_month, et_day):
-    """
-    የኢትዮጵያ ቀን → የግሪጎሪያን ቀን
-    et_month: 1-13 (1=መስከረም, 13=ጳጉሜ)
-    
-    መሰረታዊ ህግ፦
-    - የET ዓመት መጀመሪያ (መስከረም 1) = ሴፕቴምበር 11 በGC
-      (ወይም ሴፕቴምበር 12 የሚቀጥለው GC ዘለቄታ ሲሆን)
-    """
-    # የET ዓመት → የGC ዓመት (የመጀመሪያ አጋማሽ)
     gc_year = et_year + 7
-    
-    # የመስከረም 1 ቀን በGC (ሴፕቴምበር 11 ወይም 12)
     gc_start_month = 9
     gc_start_day = 11
-    
-    # የGC ዘለቄታ ዓመት ማረጋገጫ
-    # መስከረም 1 ሴፕቴምበር 12 ይሆናል የሚቀጥለው GC ዘለቄታ ሲሆን
     next_gc_year = gc_year + 1
     is_next_leap = ((next_gc_year % 4 == 0 and next_gc_year % 100 != 0)
                     or (next_gc_year % 400 == 0))
     if is_next_leap:
         gc_start_day = 12
-    
-    # ጠቅላላ ቀናት ከመስከረም 1
     total_days = (et_month - 1) * 30 + (et_day - 1)
-    
     gc_start = datetime(gc_year, gc_start_month, gc_start_day)
     gc_date = gc_start + timedelta(days=total_days)
-    
     return gc_date.year, gc_date.month, gc_date.day
 
 def gc_to_et(gc_year, gc_month, gc_day):
-    """
-    የግሪጎሪያን ቀን → የኢትዮጵያ ቀን
-    """
     gc_date = datetime(gc_year, gc_month, gc_day)
-    
-    # የET ዓመት መጀመሪያ በGC
-    # ሴፕቴምበር 11 (ወይም 12) በGC
     sep_11_current = datetime(gc_year, 9, 11)
     sep_12_current = datetime(gc_year, 9, 12)
-    
-    # የGC ዘለቄታ ዓመት ማረጋገጫ
     is_current_leap = ((gc_year % 4 == 0 and gc_year % 100 != 0)
                        or (gc_year % 400 == 0))
     et_start_current = sep_12_current if is_current_leap else sep_11_current
-    
     if gc_date >= et_start_current:
         et_year = gc_year - 7
         gc_start = et_start_current
@@ -415,21 +385,15 @@ def gc_to_et(gc_year, gc_month, gc_day):
                          else datetime(prev_year, 9, 11))
         et_year = gc_year - 8
         gc_start = et_start_prev
-    
     days_diff = (gc_date - gc_start).days
-    
     et_month = (days_diff // 30) + 1
     et_day = (days_diff % 30) + 1
-    
-    # የ13ኛ ወር (ጳጉሜ) ማስተካከያ
     if et_month > 13:
         et_month = 13
         et_day = days_diff - 12 * 30 + 1
-    
     return et_year, et_month, et_day
 
 def parse_flexible_date(date_text):
-    """ቀንን በተለያየ መለያ (/, -, ,) ለመቀበል"""
     raw = date_text.strip()
     for sep in ["-", ",", ".", " "]:
         raw = raw.replace(sep, "/")
@@ -443,12 +407,11 @@ def parse_flexible_date(date_text):
     except ValueError:
         return None, "ቀን/ወር/ዓመት በቁጥር መሆን አለበት።"
     if day < 1 or day > 30:
-        return None, "ቀን 1 እና 30 መካከል መሆን አለበት። (ጳጉሜ 5 ወይም 6 ቀን ብቻ)"
+        return None, "ቀን 1 እና 30 መካከል መሆን አለበት።"
     if month < 1 or month > 13:
         return None, "ወር 1 እና 13 መካከል መሆን አለበት።"
     if year < 1900 or year > 2100:
         return None, "ዓመት ትክክል አይደለም።"
-    # dummy datetime — ወር/ቀን በተለየ መልኩ እናስቀምጣለን
     try:
         date_obj = datetime(year, 1, 1)
         date_obj._et_year = year
@@ -459,70 +422,52 @@ def parse_flexible_date(date_text):
     return date_obj, ""
 
 def convert_calendar(date_obj, calendar):
-    """
-    ከET ወደ GC ወይም ከGC ወደ ET መቀየር
-    ይመልሳል: (et_date_str, gc_date_str, error)
-    """
     if calendar == "ET":
         et_year = getattr(date_obj, "_et_year", date_obj.year)
         et_month = getattr(date_obj, "_et_month", date_obj.month)
         et_day = getattr(date_obj, "_et_day", date_obj.day)
-        
-        # የET ቀን ማረጋገጫ
         if et_month < 1 or et_month > 13:
             return "", "", "ወር 1 እና 13 መካከል መሆን አለበት።"
-        
         max_day = 30
         if et_month == 13:
             max_day = 6 if is_ethiopian_leap_year(et_year) else 5
-        
         if et_day < 1 or et_day > max_day:
             return "", "", f"ቀን 1 እና {max_day} መካከል መሆን አለበት።"
-        
         gc_year, gc_month, gc_day = et_to_gc(et_year, et_month, et_day)
         et_date = f"{et_day:02d}/{et_month:02d}/{et_year}"
         gc_date = f"{gc_day:02d}/{gc_month:02d}/{gc_year}"
     else:
-        # GC ግቤት
         gc_year = date_obj.year
         gc_month = date_obj.month
         gc_day = date_obj.day
-        
-        # የGC ቀን ማረጋገጫ
         if gc_day < 1 or gc_day > 31:
             return "", "", "ቀን 1 እና 31 መካከል መሆን አለበት።"
         if gc_month < 1 or gc_month > 12:
             return "", "", "ወር 1 እና 12 መካከል መሆን አለበት።"
-        
         et_year, et_month, et_day = gc_to_et(gc_year, gc_month, gc_day)
         et_date = f"{et_day:02d}/{et_month:02d}/{et_year}"
         gc_date = f"{gc_day:02d}/{gc_month:02d}/{gc_year}"
-    
     return et_date, gc_date, ""
 
 # ==================================================
-# MESSAGE AUTO-DELETE (30 ደቂቃ)
+# MESSAGE AUTO-DELETE
 # ==================================================
 
 def schedule_delete(chat_id, message_id):
-    """መልዕክት ከ30 ደቂቃ በኋላ እንዲጠፋ ያስይዛል"""
     delete_at = datetime.now() + timedelta(seconds=MESSAGE_AUTO_DELETE_SECONDS)
     pending_deletes.append((chat_id, message_id, delete_at))
 
 async def send_temp_message(update, context, text, **kwargs):
-    """መልዕክት ልኮ ከ30 ደቂቃ በኋላ ለማጥፋት ያስይዛል"""
     msg = await update.message.reply_text(text, **kwargs)
     schedule_delete(msg.chat_id, msg.message_id)
     return msg
 
 async def send_temp_message_ctx(context, chat_id, text, **kwargs):
-    """በcontext በኩል መልዕክት ልኮ ለማጥፋት ያስይዛል"""
     msg = await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
     schedule_delete(msg.chat_id, msg.message_id)
     return msg
 
 async def auto_delete_messages(context):
-    """በየ1 ደቂቃው የጊዜ ገደቡ ያለፈባቸውን መልዕክቶች ያጠፋል"""
     now = datetime.now()
     remaining = []
     for chat_id, msg_id, delete_at in pending_deletes:
@@ -537,11 +482,10 @@ async def auto_delete_messages(context):
     pending_deletes.extend(remaining)
 
 # ==================================================
-# DUPLICATE CHECK (ለደላሎች ብቻ)
+# DUPLICATE CHECK
 # ==================================================
 
 def is_duplicate_broker_post(new_item, is_truck, broker_user_id):
-    """ደላላ ተመሳሳይ ጭነት/መኪና ሲለጥፍ ያረጋግጣል"""
     if is_truck:
         for t in truck_posts:
             if (t.get("active") and t.get("poster_type") == "broker"
@@ -558,7 +502,6 @@ def is_duplicate_broker_post(new_item, is_truck, broker_user_id):
     return False
 
 def is_already_selected(item_type, item_index):
-    """ጭነት/መኪና በሌላ ደንበኛ ተመርጧል?"""
     for req in connection_requests:
         if req.get("type") == item_type:
             key = f"{item_type}_index"
@@ -568,7 +511,6 @@ def is_already_selected(item_type, item_index):
     return False
 
 def is_selected_by_other(item_type, item_index, requester_id):
-    """ጭነት/መኪና በሌላ ደንበኛ (ራሱ ሳይሆን) ተመርጧል?"""
     for req in connection_requests:
         if req.get("type") == item_type:
             key = f"{item_type}_index"
@@ -579,14 +521,10 @@ def is_selected_by_other(item_type, item_index, requester_id):
     return False
 
 # ==================================================
-# SUBSCRIBE GATE (@tanapage)
+# SUBSCRIBE GATE
 # ==================================================
 
 async def send_subscribe_gate(update, context, next_action_text="ተግባሩን ለመቀጠል"):
-    """
-    @tanapage Subscribe ማስገደጃ መልዕክት
-    ሰውየው Subscribe ሲያደርግ ተግባሩን ይቀጥላል
-    """
     text = (
         "👋 እንኳን ደህና መጡ! ወደ **TANA CARGO | ጣና ጭነት**\n\n"
         "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
@@ -607,10 +545,6 @@ async def send_subscribe_gate(update, context, next_action_text="ተግባሩን
     return msg
 
 async def check_subscription(user_id, context):
-    """
-    ተጠቃሚው @tanapage ቻናል መግባቱን ያረጋግጣል
-    ይመልሳል: True / False
-    """
     try:
         member = await context.bot.get_chat_member(
             chat_id=f"@{CHANNEL_USERNAME}",
@@ -621,17 +555,16 @@ async def check_subscription(user_id, context):
         return False
     except Exception as e:
         print(f"SUBSCRIBE CHECK ERROR: {e}")
-        # ቻናሉ ላይ ችግር ካለ — ለጊዜው እንፍቀድ
         return True
 
 async def subscribed_check_callback(update, context):
-    """የSubscribe ማረጋገጫ ቁልፍ ሲነካ"""
     query = update.callback_query
     user_id = update.effective_user.id
-    
+
     is_subscribed = await check_subscription(user_id, context)
-    
+
     if is_subscribed:
+        context.user_data["subscribed"] = True
         await query.answer(
             "✅ አመሰግናለሁ! Subscribe ማድረግዎን አረጋግጠናል።",
             show_alert=True
@@ -644,6 +577,13 @@ async def subscribed_check_callback(update, context):
             )
         except Exception:
             pass
+
+        msg = await context.bot.send_message(
+            chat_id=user_id,
+            text="👇 አሁን የፈለጉትን ምናሌ ይንኩ፦",
+            reply_markup=main_menu(user_id)
+        )
+        schedule_delete(msg.chat_id, msg.message_id)
     else:
         await query.answer(
             "❌ እስካሁን @tanapage Subscribe አላደረጉም።\n\n"
@@ -776,19 +716,16 @@ async def cargo_date(update, context):
         await update.message.reply_text(f"❌ {error}")
         return CARGO_DATE
 
-    # ወደ ET እና GC ቀይር
     et_date, gc_date, error = convert_calendar(date_obj, calendar)
     if error:
         await update.message.reply_text(f"❌ {error}")
         return CARGO_DATE
 
-    # የዛሬን ቀን በET አስላ
     today_gc = datetime.now()
     today_et_year, today_et_month, today_et_day = gc_to_et(
         today_gc.year, today_gc.month, today_gc.day
     )
 
-    # የገባውን ቀን ወደ ET ቀይር
     if calendar == "ET":
         given_et_year = getattr(date_obj, "_et_year", date_obj.year)
         given_et_month = getattr(date_obj, "_et_month", date_obj.month)
@@ -798,9 +735,6 @@ async def cargo_date(update, context):
             date_obj.year, date_obj.month, date_obj.day
         )
 
-    # ==========================================
-    # 1. ያለፈ ቀን ማረጋገጫ (በET ካላንደር መሰረት)
-    # ==========================================
     is_past = False
     if given_et_year < today_et_year:
         is_past = True
@@ -818,9 +752,6 @@ async def cargo_date(update, context):
         )
         return CARGO_DATE
 
-    # ==========================================
-    # 2. ከ30 ቀናት በላይ ማረጋገጫ (በGC ቀን)
-    # ==========================================
     try:
         gc_obj = datetime.strptime(gc_date, "%d/%m/%Y")
     except Exception:
@@ -900,7 +831,6 @@ async def cargo_price(update, context):
     cargo["timestamp"] = datetime.now().isoformat()
     cargo["poster_type"] = "broker" if is_broker(update.effective_user.id) else "customer"
 
-    # የደላላ ድግግሞሽ ማረጋገጫ
     if cargo["poster_type"] == "broker":
         if is_duplicate_broker_post(cargo, is_truck=False,
                                      broker_user_id=update.effective_user.id):
@@ -939,7 +869,6 @@ async def cargo_price(update, context):
     )
     schedule_delete(msg.chat_id, msg.message_id)
 
-    # ለተመሳሳይ መኪናዎች ማሳወቂያ
     for truck in truck_posts:
         if not truck.get("active", True):
             continue
@@ -1068,7 +997,6 @@ async def truck_phone(update, context):
     expiry_date = datetime.now() + timedelta(hours=CARGO_EXPIRY_HOURS)
     truck["expiry_date"] = expiry_date.isoformat()
 
-    # የደላላ ድግግሞሽ ማረጋገጫ
     if truck["poster_type"] == "broker":
         if is_duplicate_broker_post(truck, is_truck=True,
                                      broker_user_id=update.effective_user.id):
@@ -1420,7 +1348,7 @@ async def admin_delete_broker(update, context):
         "✅ **የጭነት ደላላው ተሰርዟል።**"
     )
 # ==================================================
-# FIND CARGO (ለደንበኞች - የባለቤት መረጃ ድብቅ)
+# FIND CARGO
 # ==================================================
 
 async def find_cargo(update, context):
@@ -1445,7 +1373,6 @@ async def find_cargo(update, context):
 
         status_mark = "❌ " if is_selected else ""
 
-        # ለAdmin ብቻ የባለቤት መረጃ
         admin_info = ""
         if is_admin_user:
             owner_name = users.get(cargo["user_id"], {}).get("name", "N/A")
@@ -1607,7 +1534,6 @@ async def connection_request(update, context):
 
     requester = update.effective_user
 
-    # በሌላ ደንበኛ ተመርጧል?
     if is_selected_by_other("cargo", index, requester.id):
         await query.answer(
             "❌ ይቅርታ የመረጡት ጭነት በሌላ ደንበኛችን በድርድር ላይ ነው።\n\n"
@@ -1629,6 +1555,61 @@ async def connection_request(update, context):
 
     context.user_data["connect_info"] = {
         "type": "cargo",
+        "item_index": index,
+        "requester_id": requester.id,
+        "requester_name": requester.full_name,
+        "requester_username": requester.username or "",
+    }
+
+    await query.edit_message_text(
+        "📝 **መረጃዎን ያስገቡ**\n\n"
+        "1️⃣ ሙሉ ስምዎን ይጻፉ።"
+    )
+    return CONNECT_NAME
+
+# ==================================================
+# TRUCK CONNECTION REQUEST
+# ==================================================
+
+async def truck_connection_request(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    index = int(query.data.split("_")[1])
+
+    if index < 0 or index >= len(truck_posts):
+        await query.edit_message_text("❌ ይህ መኪና ከአሁን በኋላ አይገኝም።")
+        return ConversationHandler.END
+
+    truck = truck_posts[index]
+
+    if not truck.get("active", True):
+        await query.edit_message_text("❌ ይህ መኪና ተወግዷል።")
+        return ConversationHandler.END
+
+    requester = update.effective_user
+
+    if is_selected_by_other("truck", index, requester.id):
+        await query.answer(
+            "❌ ይቅርታ የመረጡት የጭነት መኪና በሌላ ደንበኛችን በድርድር ላይ ነው።\n\n"
+            "እባክዎ ሌላ ተስማሚ መኪና ይምረጡ።",
+            show_alert=True
+        )
+        return ConversationHandler.END
+
+    if truck["user_id"] == requester.id:
+        await query.answer("❌ የራስዎን መኪና መጠየቅ አይችሉም።", show_alert=True)
+        return ConversationHandler.END
+
+    for req in connection_requests:
+        if (req.get("type") == "truck" and req.get("truck_index") == index
+            and req["requester_id"] == requester.id
+            and req["status"] in ["pending", "negotiating", "awaiting_payment", "admin_confirming"]):
+            await query.answer("⚠️ ይህን መኪና አስቀድመው ጠይቀዋል።", show_alert=True)
+            return ConversationHandler.END
+
+    context.user_data["connect_info"] = {
+        "type": "truck",
         "item_index": index,
         "requester_id": requester.id,
         "requester_name": requester.full_name,
@@ -1685,7 +1666,7 @@ async def connect_phone(update, context):
     return CONNECT_TYPE
 
 # ==================================================
-# CONNECT_TYPE (የመጨረሻ ደረጃ + notification + admin notification)
+# CONNECT_TYPE (የመጨረሻ ደረጃ)
 # ==================================================
 
 async def connect_type(update, context):
@@ -1700,7 +1681,6 @@ async def connect_type(update, context):
     context.user_data["connect_info"] = info
     requester = update.effective_user
 
-    # የጥያቄ መዝገብ ፍጠር
     if info.get("type") == "cargo":
         cargo = cargo_posts[info["item_index"]]
         request = {
@@ -1756,9 +1736,6 @@ async def connect_type(update, context):
     req_index = len(connection_requests) - 1
     context.user_data.pop("connect_info", None)
 
-    # ==========================================
-    # ለጠያቂው notification
-    # ==========================================
     msg = await update.message.reply_text(
         "✅ **እናመሰግናለን!**\n\n"
         "📌 ምዝገባዎን ጨርሰዋል።\n\n"
@@ -1768,71 +1745,12 @@ async def connect_type(update, context):
     )
     schedule_delete(msg.chat_id, msg.message_id)
 
-    # ==========================================
-    # ለAdmin/Super Admin notification (1 ጊዜ ብቻ)
-    # ==========================================
     await send_admin_notification(context, req_index)
 
     return ConversationHandler.END
 
 # ==================================================
-# TRUCK CONNECTION REQUEST
-# ==================================================
-
-async def truck_connection_request(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    index = int(query.data.split("_")[1])
-
-    if index < 0 or index >= len(truck_posts):
-        await query.edit_message_text("❌ ይህ መኪና ከአሁን በኋላ አይገኝም።")
-        return ConversationHandler.END
-
-    truck = truck_posts[index]
-
-    if not truck.get("active", True):
-        await query.edit_message_text("❌ ይህ መኪና ተወግዷል።")
-        return ConversationHandler.END
-
-    requester = update.effective_user
-
-    # በሌላ ደንበኛ ተመርጧል?
-    if is_selected_by_other("truck", index, requester.id):
-        await query.answer(
-            "❌ ይቅርታ የመረጡት የጭነት መኪና በሌላ ደንበኛችን በድርድር ላይ ነው።\n\n"
-            "እባክዎ ሌላ ተስማሚ መኪና ይምረጡ።",
-            show_alert=True
-        )
-        return ConversationHandler.END
-
-    if truck["user_id"] == requester.id:
-        await query.answer("❌ የራስዎን መኪና መጠየቅ አይችሉም።", show_alert=True)
-        return ConversationHandler.END
-
-    for req in connection_requests:
-        if (req.get("type") == "truck" and req.get("truck_index") == index
-            and req["requester_id"] == requester.id
-            and req["status"] in ["pending", "negotiating", "awaiting_payment", "admin_confirming"]):
-            await query.answer("⚠️ ይህን መኪና አስቀድመው ጠይቀዋል።", show_alert=True)
-            return ConversationHandler.END
-
-    context.user_data["connect_info"] = {
-        "type": "truck",
-        "item_index": index,
-        "requester_id": requester.id,
-        "requester_name": requester.full_name,
-        "requester_username": requester.username or "",
-    }
-
-    await query.edit_message_text(
-        "📝 **መረጃዎን ያስገቡ**\n\n"
-        "1️⃣ ሙሉ ስምዎን ይጻፉ።"
-    )
-    return CONNECT_NAME
-
-# ==================================================
-# SEND ADMIN NOTIFICATION (1 ጊዜ ብቻ — "ቶሎ ያናግሯቸው")
+# SEND ADMIN NOTIFICATION (1 ጊዜ ብቻ)
 # ==================================================
 
 async def send_admin_notification(context, req_index):
@@ -1913,7 +1831,7 @@ async def send_admin_notification(context, req_index):
             pass
 
 # ==================================================
-# ADMIN RIGHT CONFIRM (ጭነት/መኪና ወዲያውኑ ከገበያ ይወገዳል)
+# ADMIN RIGHT CONFIRM
 # ==================================================
 
 async def admin_right_confirm(update, context):
@@ -1941,9 +1859,6 @@ async def admin_right_confirm(update, context):
     req["admin_right_confirmed"] = True
     req["status"] = "negotiating"
 
-    # ==========================================
-    # ጭነቱን/መኪናውን ወዲያውኑ ከገበያ አውጣ
-    # ==========================================
     if req.get("type") == "cargo":
         ci = req.get("cargo_index")
         if isinstance(ci, int) and 0 <= ci < len(cargo_posts):
@@ -1960,9 +1875,6 @@ async def admin_right_confirm(update, context):
         "📌 ለሁለቱም ወገኖች ማሳወቂያ ተልኳል።"
     )
 
-    # ==========================================
-    # ለፈላጊው (Seeker)
-    # ==========================================
     seeker_id = req["requester_id"]
     item_type = "የጭነት መኪና" if req.get("type") == "truck" else "የጭነት"
 
@@ -1983,9 +1895,6 @@ async def admin_right_confirm(update, context):
         if i == 0:
             await asyncio.sleep(10 * 60)
 
-    # ==========================================
-    # ለባለቤቱ (Owner)
-    # ==========================================
     owner_id = other_party_id(req)
 
     if req.get("type") == "truck":
@@ -2025,7 +1934,7 @@ async def admin_right_confirm(update, context):
             await asyncio.sleep(10 * 60)
 
 # ==================================================
-# ADMIN X DELETE (Super Admin ብቻ — ጭነት/መኪና ነፃ ይሆናል)
+# ADMIN X DELETE
 # ==================================================
 
 async def admin_x_delete(update, context):
@@ -2047,7 +1956,6 @@ async def admin_x_delete(update, context):
     req = connection_requests[index]
     req["status"] = "deleted"
 
-    # ጭነት/መኪና ነፃ አድርግ (እንደገና እንዲታይ)
     if req.get("type") == "cargo":
         ci = req.get("cargo_index")
         if isinstance(ci, int) and 0 <= ci < len(cargo_posts):
@@ -2098,7 +2006,7 @@ async def admin_clear_notification(update, context):
             pass
 
 # ==================================================
-# SHOW CONNECTION REQUESTS (ሁለቱም ወገን አንድ ላይ + Right/X)
+# SHOW CONNECTION REQUESTS
 # ==================================================
 
 async def show_connection_requests(update, context):
@@ -2127,9 +2035,6 @@ async def show_connection_requests(update, context):
         )
         return
 
-    # ==========================================
-    # ለእያንዳንዱ ጥያቄ — ሁለቱም ወገን አንድ ላይ
-    # ==========================================
     for i, req in received:
         if req.get("type") == "truck":
             truck = truck_posts[req["truck_index"]]
@@ -2186,7 +2091,6 @@ async def show_connection_requests(update, context):
                 f"📌 ሁኔታ: {req['status']}"
             )
 
-        # ✅ Right እና ❌ X ቁልፎች (ወደ ታች)
         buttons = []
         buttons.append([
             InlineKeyboardButton(
@@ -2212,7 +2116,7 @@ async def show_connection_requests(update, context):
         )
 
 # ==================================================
-# ADMIN DELETE CONNECTION (Super Admin ብቻ)
+# ADMIN DELETE CONNECTION
 # ==================================================
 
 async def admin_delete_connection(update, context):
@@ -2666,11 +2570,9 @@ async def receipt_message(update, context):
 async def receipt_photo(update, context):
     user_id = update.effective_user.id
 
-    # 1. ወደ Admin መልዕክት መላኪያ ሁነታ ካለ
     if context.user_data.get("sending_admin_message"):
         return await handle_user_photo(update, context)
 
-    # 2. የክፍያ ደረሰኝ ሁነታ
     index = get_payment_index(user_id)
     if index is None:
         return
@@ -2911,20 +2813,35 @@ async def share_full_information(index, context):
             pass
 
 # ==================================================
-# MENU ROUTER (Subscribe Gate ጨምሮ)
+# MENU ROUTER (Welcome + Subscribe Gate)
 # ==================================================
 
 async def menu_router(update, context):
     text = update.message.text
     uid = update.effective_user.id
 
-    # Subscribe ማረጋገጫ (የመጀመሪያ ጊዜ ብቻ)
+    if not context.user_data.get("welcome_shown"):
+        context.user_data["welcome_shown"] = True
+        is_subscribed = await check_subscription(uid, context)
+        if is_subscribed:
+            context.user_data["subscribed"] = True
+            await _handle_menu_action(update, context, text)
+            return
+        else:
+            await send_subscribe_gate(update, context, "ጉዳይዎን")
+            return
+
     if not context.user_data.get("subscribed"):
         is_subscribed = await check_subscription(uid, context)
         if not is_subscribed:
             await send_subscribe_gate(update, context, "ጉዳይዎን")
             return
         context.user_data["subscribed"] = True
+
+    await _handle_menu_action(update, context, text)
+
+async def _handle_menu_action(update, context, text):
+    uid = update.effective_user.id
 
     if text == "🚚 ጭነት መለጠፍ":
         return await cargo_start(update, context)
@@ -2998,7 +2915,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"DB SAVE USER ERROR: {e}")
 
-    # Subscribe ማረጋገጫ
+    context.user_data["welcome_shown"] = True
+
     is_subscribed = await check_subscription(user.id, context)
     if is_subscribed:
         context.user_data["subscribed"] = True
@@ -3087,7 +3005,6 @@ async def cancel(update, context):
         reply_markup=main_menu(update.effective_user.id)
     )
     return ConversationHandler.END
-
 # ==================================================
 # ERROR HANDLER
 # ==================================================
@@ -3198,7 +3115,9 @@ def main():
     application = Application.builder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
+    # ==================================================
     # Simple commands
+    # ==================================================
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cargo", cargo_start))
     application.add_handler(CommandHandler("truck", truck_start))
@@ -3210,21 +3129,25 @@ def main():
     application.add_handler(CommandHandler("owner", owner_start))
     application.add_handler(CommandHandler("broker", broker_start))
 
-    # Master Conversation
+    # ==================================================
+    # Master Conversation (ሁሉም ምናሌዎች menu_router ያልፋሉ)
+    # ==================================================
     master_conversation = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), cargo_start),
-            MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), truck_start),
-            MessageHandler(filters.Regex(r"^📞 Support$"), support_start),
-            MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), service_payment),
-            MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), find_cargo),
-            MessageHandler(filters.Regex(r"^🚛 መኪና መፈለግ$"), find_truck),
-            MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), profile),
-            MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), show_connection_requests),
-            MessageHandler(filters.Regex(r"^📋 የጭነት ደላሎች መዝገብ$"), show_broker_registry),
-            MessageHandler(filters.Regex(r"^🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ$"), broker_start),
+            # ✅ ሁሉም ምናሌዎች በ menu_router ያልፋሉ — Welcome + Subscribe
+            MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🚛 መኪና መፈለግ$"), menu_router),
+            MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), menu_router),
+            MessageHandler(filters.Regex(r"^📋 የጭነት ደላሎች መዝገብ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ$"), menu_router),
             MessageHandler(filters.Regex(r"^📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ$"), menu_router),
-            MessageHandler(filters.Regex(r"^ℹ️ About$"), about),
+            MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), menu_router),
+            MessageHandler(filters.Regex(r"^📞 Support$"), menu_router),
+            MessageHandler(filters.Regex(r"^ℹ️ About$"), menu_router),
+            # Commands
             CommandHandler("cargo", cargo_start),
             CommandHandler("truck", truck_start),
             CommandHandler("owner", owner_start),
@@ -3269,50 +3192,70 @@ def main():
     )
     application.add_handler(master_conversation)
 
+    # ==================================================
     # Connection callbacks
+    # ==================================================
     application.add_handler(CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"))
     application.add_handler(CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"))
     application.add_handler(CallbackQueryHandler(already_selected_callback, pattern=r"^already_selected$"))
 
-    # Subscribe check
+    # ==================================================
+    # Subscribe check callback
+    # ==================================================
     application.add_handler(CallbackQueryHandler(subscribed_check_callback, pattern=r"^subscribed_check$"))
 
+    # ==================================================
     # Broker callbacks
+    # ==================================================
     application.add_handler(CallbackQueryHandler(broker_right_confirm, pattern=r"^brokerright_\d+$"))
     application.add_handler(CallbackQueryHandler(broker_x_delete, pattern=r"^brokerxdelete_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_delete_broker, pattern=r"^admindeletebroker_\d+$"))
 
+    # ==================================================
     # Admin right/X/Clear
+    # ==================================================
     application.add_handler(CallbackQueryHandler(admin_right_confirm, pattern=r"^adminright_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_x_delete, pattern=r"^adminxdelete_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_clear_notification, pattern=r"^adminclear_\d+$"))
 
+    # ==================================================
     # Negotiation buttons
+    # ==================================================
     application.add_handler(CallbackQueryHandler(agree_price, pattern=r"^agreeprice_\d+_\d+$"))
     application.add_handler(CallbackQueryHandler(reject_price_button, pattern=r"^rejectprice_\d+_\d+$"))
 
+    # ==================================================
     # Admin payment
+    # ==================================================
     application.add_handler(CallbackQueryHandler(
         admin_payment_action,
         pattern=r"^admin(approve|reject)_\d+_(requester|other)_\d+$"
     ))
 
+    # ==================================================
     # Admin delete connection
+    # ==================================================
     application.add_handler(CallbackQueryHandler(
         admin_delete_connection,
         pattern=r"^admindeleteconnection_\d+$"
     ))
 
-    # Photo receipt
+    # ==================================================
+    # Photo/Receipt
+    # ==================================================
     application.add_handler(MessageHandler(filters.PHOTO, receipt_photo))
     application.add_handler(MessageHandler(
         filters.Document.ALL & ~filters.COMMAND, receipt_photo
     ))
 
+    # ==================================================
     # Text router
+    # ==================================================
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
+    # ==================================================
     # Job queue
+    # ==================================================
     if application.job_queue:
         application.job_queue.run_repeating(clean_expired_posts, interval=3600, first=60)
         application.job_queue.run_repeating(auto_delete_messages, interval=60, first=30)
