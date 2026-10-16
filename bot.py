@@ -150,7 +150,6 @@ cargo_posts = []
 truck_posts = []
 brokers = []
 connection_requests = []
-negotiation_timeouts = {}
 pending_deletes = []
 
 # ==================================================
@@ -175,17 +174,6 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
 (
     BROKER_NAME, BROKER_PHONE, BROKER_ADDRESS,
 ) = range(22, 25)
-
-# ==================================================
-# MENU REGEX (ሁሉም ምናሌዎች ለ menu_interrupt)
-# ==================================================
-
-MASTER_MENU_REGEX = (
-    r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|"
-    r"👤 የኔ መረጃ|🤝 የግንኙነት ጥያቄዎች|📋 የጭነት ደላሎች መዝገብ|"
-    r"🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ|📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ|"
-    r"💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"
-)
 
 # ==================================================
 # MENUS
@@ -450,11 +438,6 @@ def schedule_delete(chat_id, message_id):
     delete_at = datetime.now() + timedelta(seconds=MESSAGE_AUTO_DELETE_SECONDS)
     pending_deletes.append((chat_id, message_id, delete_at))
 
-async def send_temp_message(update, context, text, **kwargs):
-    msg = await update.message.reply_text(text, **kwargs)
-    schedule_delete(msg.chat_id, msg.message_id)
-    return msg
-
 async def auto_delete_messages(context):
     now = datetime.now()
     remaining = []
@@ -511,26 +494,6 @@ def is_selected_by_other(item_type, item_index, requester_id):
 # ==================================================
 # SUBSCRIBE GATE
 # ==================================================
-
-async def send_subscribe_gate(update, context, next_action_text="ተግባሩን ለመቀጠል"):
-    text = (
-        "👋 እንኳን ደህና መጡ! ወደ **TANA CARGO | ጣና ጭነት**\n\n"
-        "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
-        "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📢 **ስለ ጣና ጭነት (Tana Cargo) መረጃ** "
-        "እንዲደርስዎ አክቲቭ የሆነችውን 👉 **@tanapage** "
-        "Subscribe ያድርጉ! 🔔\n\n"
-        "✅ Subscribe ካደረጉ በኋላ ከታች ያለውን "
-        "**✅ Subscribe አድርጌያለሁ** የሚለውን ይጫኑ።\n\n"
-        f"🙏 ከዚያ {next_action_text} ይችላሉ።"
-    )
-    msg = await update.message.reply_text(
-        text,
-        reply_markup=subscribe_keyboard()
-    )
-    schedule_delete(msg.chat_id, msg.message_id)
-    return msg
 
 async def check_subscription(user_id, context):
     try:
@@ -839,7 +802,7 @@ async def cargo_price(update, context):
     )
     poster_label = get_poster_label(update.effective_user.id)
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "✅ ጭነትዎ በትክክል ተመዝግቧል!\n\n"
         f"👤 የጭነት ባለቤት፦ {owner_name}\n"
         f"{poster_label}\n"
@@ -855,7 +818,6 @@ async def cargo_price(update, context):
         "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።",
         reply_markup=main_menu(update.effective_user.id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
 
     for truck in truck_posts:
         if not truck.get("active", True):
@@ -1006,7 +968,7 @@ async def truck_phone(update, context):
     route_display = truck.get("route", "በማንኛውም ቦታ")
     poster_label = get_poster_label(update.effective_user.id)
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "✅ መኪናዎ በትክክል ተመዝግቧል!\n\n"
         f"👤 የመኪና ባለቤት፦ {owner_name}\n"
         f"{poster_label}\n"
@@ -1019,7 +981,6 @@ async def truck_phone(update, context):
         "🔒 ታርጋና ስልክ ቁጥር ለሌሎች ተጠቃሚዎች አይታይም።",
         reply_markup=main_menu(update.effective_user.id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
 
     for cargo in cargo_posts:
         if not cargo.get("active", True):
@@ -1096,14 +1057,13 @@ async def broker_address(update, context):
     except Exception as e:
         print(f"DB SAVE BROKER ERROR: {e}")
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "✅ **ስለተመዘገቡ እናመሰግናለን!**\n\n"
         "የጭነት ደላላ መሆንዎን አረጋግጠን "
         "አብረን በጋራ እንሰራለን።\n\n"
         "📌 ማረጋገጫ ሲደረግ ይነገርዎታል።",
         reply_markup=main_menu(user.id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
 
     await send_admin_broker_notification(context, broker)
 
@@ -1344,11 +1304,11 @@ async def find_cargo(update, context):
     is_admin_user = is_admin(update.effective_user.id)
 
     if not active_cargos:
-        await send_temp_message(
-            update, context,
+        await update.message.reply_text(
             "📦 በአሁኑ ጊዜ ተስማሚ ጭነት የለም።\n\n"
             "🔎 ጭነት እያፈላለግን ነው።\n"
-            "🔔 ተስማሚ ጭነት ሲገኝ እናሳውቅዎታለን።"
+            "🔔 ተስማሚ ጭነት ሲገኝ እናሳውቅዎታለን።",
+            reply_markup=main_menu(update.effective_user.id)
         )
         return
 
@@ -1405,13 +1365,11 @@ async def find_cargo(update, context):
                 )
             ]])
 
-        msg_obj = await update.message.reply_text(msg, reply_markup=kb)
-        schedule_delete(msg_obj.chat_id, msg_obj.message_id)
+        await update.message.reply_text(msg, reply_markup=kb)
 
-    total_msg = await update.message.reply_text(
+    await update.message.reply_text(
         f"📋 ጠቅላላ {len(active_cargos)} ጭነቶች ተገኝተዋል።"
     )
-    schedule_delete(total_msg.chat_id, total_msg.message_id)
 
 # ==================================================
 # FIND TRUCK
@@ -1422,11 +1380,11 @@ async def find_truck(update, context):
     is_admin_user = is_admin(update.effective_user.id)
 
     if not active_trucks:
-        await send_temp_message(
-            update, context,
+        await update.message.reply_text(
             "🚛 በአሁኑ ጊዜ ተስማሚ የጭነት መኪና የለም።\n\n"
             "🔎 መኪና እያፈላለግን ነው።\n"
-            "🔔 ተስማሚ መኪና ሲገኝ እናሳውቅዎታለን።"
+            "🔔 ተስማሚ መኪና ሲገኝ እናሳውቅዎታለን።",
+            reply_markup=main_menu(update.effective_user.id)
         )
         return
 
@@ -1480,13 +1438,11 @@ async def find_truck(update, context):
                 )
             ]])
 
-        msg_obj = await update.message.reply_text(msg, reply_markup=kb)
-        schedule_delete(msg_obj.chat_id, msg_obj.message_id)
+        await update.message.reply_text(msg, reply_markup=kb)
 
-    total_msg = await update.message.reply_text(
+    await update.message.reply_text(
         f"📋 ጠቅላላ {len(active_trucks)} መኪኖች ተገኝተዋል።"
     )
-    schedule_delete(total_msg.chat_id, total_msg.message_id)
 
 # ==================================================
 # ALREADY SELECTED CALLBACK
@@ -1716,14 +1672,13 @@ async def connect_type(update, context):
     req_index = len(connection_requests) - 1
     context.user_data.pop("connect_info", None)
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "✅ **እናመሰግናለን!**\n\n"
         "📌 ምዝገባዎን ጨርሰዋል።\n\n"
         "⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
         "🙏 እናመሰግናለን!",
         reply_markup=main_menu(requester.id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
 
     await send_admin_notification(context, req_index)
 
@@ -1945,8 +1900,6 @@ async def admin_x_delete(update, context):
         if isinstance(ti, int) and 0 <= ti < len(truck_posts):
             truck_posts[ti]["active"] = True
 
-    negotiation_timeouts.pop(index, None)
-
     await query.edit_message_text(
         "❌ **ተሰርዟል!**\n\n"
         "ይህ ጥያቄ በ Super Admin ተሰርዟል።\n\n"
@@ -1993,13 +1946,12 @@ async def show_connection_requests(update, context):
     user_id = update.effective_user.id
 
     if not is_admin(user_id):
-        msg = await update.message.reply_text(
+        await update.message.reply_text(
             "📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\n"
             "ማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።\n\n"
             "📌 Admin ወይም Super Admin ብቻ ያየዋል።",
             reply_markup=main_menu(user_id)
         )
-        schedule_delete(msg.chat_id, msg.message_id)
         context.user_data["sending_admin_message"] = True
         return
 
@@ -2138,12 +2090,11 @@ async def handle_user_message(update, context):
         except Exception:
             pass
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "✅ መልዕክትዎ ለ Admin/Super Admin ተልኳል።\n\n"
         "📸 ፎቶም መላክ ይችላሉ!",
         reply_markup=main_menu(user_id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
 
 # ==================================================
 # HANDLE USER PHOTO TO ADMINS
@@ -2186,12 +2137,11 @@ async def handle_user_photo(update, context):
         except Exception:
             pass
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         "✅ ፎቶ/ስክሪንሾትዎ ለ Admin/Super Admin ተልኳል።\n\n"
         "📌 ሌላ መልዕክት ወይም ፎቶ መላክ ይችላሉ።",
         reply_markup=main_menu(user_id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
 
 # ==================================================
 # OWNER REGISTRATION
@@ -2234,11 +2184,10 @@ async def owner_phone(update, context):
     except Exception as e:
         print(f"DB SAVE OWNER ERROR: {e}")
 
-    msg = await update.message.reply_text(
+    await update.message.reply_text(
         f"✅ ምዝገባዎ ተጠናቋል!\n\n👤 {owner['name']}\n📞 {owner['phone']}",
         reply_markup=main_menu(user.id)
     )
-    schedule_delete(msg.chat_id, msg.message_id)
     return ConversationHandler.END
 
 # ==================================================
@@ -2793,129 +2742,7 @@ async def share_full_information(index, context):
             pass
 
 # ==================================================
-# MENU ROUTER (Welcome + Subscribe)
-# ==================================================
-
-async def menu_router(update, context):
-    text = update.message.text
-    uid = update.effective_user.id
-
-    if not context.user_data.get("welcome_shown"):
-        context.user_data["welcome_shown"] = True
-        is_subscribed = await check_subscription(uid, context)
-        if is_subscribed:
-            context.user_data["subscribed"] = True
-            await _handle_menu_action(update, context, text)
-            return
-        else:
-            await send_subscribe_gate(update, context, "ጉዳይዎን")
-            return
-
-    if not context.user_data.get("subscribed"):
-        is_subscribed = await check_subscription(uid, context)
-        if not is_subscribed:
-            await send_subscribe_gate(update, context, "ጉዳይዎን")
-            return
-        context.user_data["subscribed"] = True
-
-    await _handle_menu_action(update, context, text)
-
-async def _handle_menu_action(update, context, text):
-    uid = update.effective_user.id
-
-    if text == "🚚 ጭነት መለጠፍ":
-        return await cargo_start(update, context)
-    if text == "🔎 ጭነት መፈለግ":
-        await find_cargo(update, context); return
-    if text == "🚛 መኪና ማስመዝገብ":
-        return await truck_start(update, context)
-    if text == "🚛 መኪና መፈለግ":
-        await find_truck(update, context); return
-    if text == "👤 የኔ መረጃ":
-        await profile(update, context); return
-    if text == "🤝 የግንኙነት ጥያቄዎች":
-        await show_connection_requests(update, context); return
-    if text == "📋 የጭነት ደላሎች መዝገብ":
-        await show_broker_registry(update, context); return
-    if text == "🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ":
-        return await broker_start(update, context)
-    if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
-        msg = await update.message.reply_text(
-            "📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\n"
-            "ማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።\n\n"
-            "📌 Admin ወይም Super Admin ብቻ ያየዋል።",
-            reply_markup=main_menu(uid)
-        )
-        schedule_delete(msg.chat_id, msg.message_id)
-        context.user_data["sending_admin_message"] = True
-        return
-    if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
-        await service_payment(update, context); return
-    if text == "📞 Support":
-        return await support_start(update, context)
-    if text == "ℹ️ About":
-        await about(update, context); return
-
-# ==================================================
-# MENU INTERRUPT (በየ state ውስጥ ምናሌ ሲነካ)
-# ==================================================
-
-async def menu_interrupt(update, context):
-    """
-    ተጠቃሚው በማንኛውም state ውስጥ ሌላ ምናሌ ቢነካ
-    የአሁኑን ሂደት ሰርዞ ወደ አዲሱ ይሄዳል
-    """
-    text = update.message.text
-    context.user_data.clear()
-    uid = update.effective_user.id
-
-    # Welcome እና Subscribe ዳግም አስጀምር
-    context.user_data["welcome_shown"] = True
-    is_subscribed = await check_subscription(uid, context)
-    if is_subscribed:
-        context.user_data["subscribed"] = True
-    else:
-        await send_subscribe_gate(update, context, "ጉዳይዎን")
-        return ConversationHandler.END
-
-    # ወደ አዲሱ ጉዳይ ቀጥል
-    if text == "🚚 ጭነት መለጠፍ":
-        return await cargo_start(update, context)
-    if text == "🔎 ጭነት መፈለግ":
-        await find_cargo(update, context)
-        return ConversationHandler.END
-    if text == "🚛 መኪና ማስመዝገብ":
-        return await truck_start(update, context)
-    if text == "🚛 መኪና መፈለግ":
-        await find_truck(update, context)
-        return ConversationHandler.END
-    if text == "👤 የኔ መረጃ":
-        await profile(update, context)
-        return ConversationHandler.END
-    if text == "🤝 የግንኙነት ጥያቄዎች":
-        await show_connection_requests(update, context)
-        return ConversationHandler.END
-    if text == "📋 የጭነት ደላሎች መዝገብ":
-        await show_broker_registry(update, context)
-        return ConversationHandler.END
-    if text == "🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ":
-        return await broker_start(update, context)
-    if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
-        await menu_router(update, context)
-        return ConversationHandler.END
-    if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
-        await service_payment(update, context)
-        return ConversationHandler.END
-    if text == "📞 Support":
-        return await support_start(update, context)
-    if text == "ℹ️ About":
-        await about(update, context)
-        return ConversationHandler.END
-
-    return ConversationHandler.END
-
-# ==================================================
-# TEXT ROUTER
+# TEXT ROUTER (ቀላል — ምንም menu_router የለም)
 # ==================================================
 
 async def text_router(update, context):
@@ -2924,19 +2751,23 @@ async def text_router(update, context):
 
     user_id = update.effective_user.id
 
+    # 1. ለAdmin መልዕክት መላኪያ ሁነታ
     if context.user_data.get("sending_admin_message"):
         return await handle_user_message(update, context)
 
+    # 2. የግንኙነት መረጃ እየተሰበሰበ ከሆነ — ዝም በል
     if context.user_data.get("connect_info"):
         return
 
+    # 3. የክፍያ ደረሰኝ ሁነታ
     if get_payment_index(user_id) is not None:
         return await receipt_message(update, context)
 
+    # 4. ድርድር ሁነታ
     if get_negotiation_index(user_id) is not None:
         return await submit_price(update, context)
 
-    return await menu_router(update, context)
+    # 5. ሌላ — ዝም በል (ምንም አታድርግ)
 
 # ==================================================
 # START / PROFILE / SUPPORT / ABOUT / PAYMENT / CANCEL
@@ -2953,20 +2784,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"DB SAVE USER ERROR: {e}")
 
-    context.user_data["welcome_shown"] = True
-
     is_subscribed = await check_subscription(user.id, context)
     if is_subscribed:
         context.user_data["subscribed"] = True
-        msg = await update.message.reply_text(
+        await update.message.reply_text(
             "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
             "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
             "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።",
             reply_markup=main_menu(user.id)
         )
-        schedule_delete(msg.chat_id, msg.message_id)
     else:
-        await send_subscribe_gate(update, context, "ጉዳይዎን")
+        await update.message.reply_text(
+            "👋 እንኳን ደህና መጡ! ወደ **TANA CARGO | ጣና ጭነት**\n\n"
+            "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
+            "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📢 **ስለ ጣና ጭነት (Tana Cargo) መረጃ** "
+            "እንዲደርስዎ አክቲቭ የሆነችውን 👉 **@tanapage** "
+            "Subscribe ያድርጉ! 🔔\n\n"
+            "✅ Subscribe ካደረጉ በኋላ ከታች ያለውን "
+            "**✅ Subscribe አድርጌያለሁ** የሚለውን ይጫኑ።",
+            reply_markup=subscribe_keyboard()
+        )
 
 async def profile(update, context):
     user_id = update.effective_user.id
@@ -3168,131 +3007,55 @@ def main():
     application.add_handler(CommandHandler("broker", broker_start))
 
     # ==================================================
-    # Master Conversation — ሁሉም ምናሌዎች menu_router ያልፋሉ
-    # በየ state ውስጥ menu_interrupt ተጨምሯል
+    # Master Conversation — ሁሉም ምናሌዎች በቀጥታ በ entry_points
+    # (ምንም menu_router ወይም menu_interrupt የለም)
     # ==================================================
     master_conversation = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚛 መኪና መፈለግ$"), menu_router),
-            MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), menu_router),
-            MessageHandler(filters.Regex(r"^📋 የጭነት ደላሎች መዝገብ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ$"), menu_router),
-            MessageHandler(filters.Regex(r"^📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ$"), menu_router),
-            MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), menu_router),
-            MessageHandler(filters.Regex(r"^📞 Support$"), menu_router),
-            MessageHandler(filters.Regex(r"^ℹ️ About$"), menu_router),
-            CommandHandler("cargo", cargo_start),
-            CommandHandler("truck", truck_start),
+            # የጭነት ምዝገባ
+            MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), cargo_start),
+            # የመኪና ምዝገባ
+            MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), truck_start),
+            # የደላላ ምዝገባ
+            MessageHandler(filters.Regex(r"^🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ$"), broker_start),
+            # የጭነት ባለቤት ምዝገባ
             CommandHandler("owner", owner_start),
             CommandHandler("broker", broker_start),
+            CommandHandler("cargo", cargo_start),
+            CommandHandler("truck", truck_start),
         ],
         states={
-            CARGO_FROM: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from),
-            ],
-            CARGO_TO: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to),
-            ],
-            CARGO_TYPE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type),
-            ],
+            CARGO_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from)],
+            CARGO_TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to)],
+            CARGO_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type)],
             CARGO_VEHICLE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 CallbackQueryHandler(cargo_vehicle, pattern=r"^cargo_vehicle_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_vehicle_text),
             ],
-            CARGO_SIZE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(cargo_size, pattern=r"^size_"),
-            ],
-            CARGO_WEIGHT: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight),
-            ],
-            CARGO_CALENDAR: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(cargo_calendar, pattern=r"^cal_"),
-            ],
-            CARGO_DATE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date),
-            ],
-            CARGO_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone),
-            ],
-            CARGO_PRICE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price),
-            ],
-            TRUCK_TYPE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type),
-            ],
-            TRUCK_PLATE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate),
-            ],
-            TRUCK_CAPACITY: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity),
-            ],
+            CARGO_SIZE: [CallbackQueryHandler(cargo_size, pattern=r"^size_")],
+            CARGO_WEIGHT: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight)],
+            CARGO_CALENDAR: [CallbackQueryHandler(cargo_calendar, pattern=r"^cal_")],
+            CARGO_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date)],
+            CARGO_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone)],
+            CARGO_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price)],
+            TRUCK_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type)],
+            TRUCK_PLATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate)],
+            TRUCK_CAPACITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity)],
             TRUCK_ROUTE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 CallbackQueryHandler(truck_route_choice, pattern=r"^route_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, truck_route),
             ],
-            TRUCK_ADDRESS: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_address),
-            ],
-            TRUCK_DRIVER: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_driver),
-            ],
-            TRUCK_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone),
-            ],
-            OWNER_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name),
-            ],
-            OWNER_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, owner_phone),
-            ],
-            BROKER_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_name),
-            ],
-            BROKER_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_phone),
-            ],
-            BROKER_ADDRESS: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_address),
-            ],
-            CONNECT_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_name),
-            ],
-            CONNECT_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone),
-            ],
-            CONNECT_TYPE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_type),
-            ],
+            TRUCK_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_address)],
+            TRUCK_DRIVER: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_driver)],
+            TRUCK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone)],
+            OWNER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name)],
+            OWNER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_phone)],
+            BROKER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, broker_name)],
+            BROKER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broker_phone)],
+            BROKER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, broker_address)],
+            CONNECT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_name)],
+            CONNECT_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone)],
+            CONNECT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, connect_type)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
@@ -3349,6 +3112,38 @@ def main():
     ))
 
     # ==================================================
+    # ቀላል የምናሌ ተግባራት (find, profile, support, about, payment)
+    # ==================================================
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^🔎 ጭነት መፈለግ$"), find_cargo
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^🚛 መኪና መፈለግ$"), find_truck
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^👤 የኔ መረጃ$"), profile
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), show_connection_requests
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^📋 የጭነት ደላሎች መዝገብ$"), show_broker_registry
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ$"),
+        lambda u, c: _start_admin_message_mode(u, c)
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), service_payment
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^📞 Support$"), support_start
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^ℹ️ About$"), about
+    ))
+
+    # ==================================================
     # Photo/Receipt
     # ==================================================
     application.add_handler(MessageHandler(filters.PHOTO, receipt_photo))
@@ -3357,7 +3152,7 @@ def main():
     ))
 
     # ==================================================
-    # Text router
+    # Text router (ለጽሑፍ መልዕክቶች)
     # ==================================================
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
@@ -3372,6 +3167,20 @@ def main():
     print("TANA CARGO Bot is starting...")
     start_health_server()
     application.run_polling(drop_pending_updates=True)
+
+# ==================================================
+# HELPER — የAdmin መልዕክት ሁነታ ማስጀመሪያ
+# ==================================================
+
+async def _start_admin_message_mode(update, context):
+    user_id = update.effective_user.id
+    await update.message.reply_text(
+        "📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\n"
+        "ማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።\n\n"
+        "📌 Admin ወይም Super Admin ብቻ ያየዋል።",
+        reply_markup=main_menu(user_id)
+    )
+    context.user_data["sending_admin_message"] = True
 
 if __name__ == "__main__":
     main()
