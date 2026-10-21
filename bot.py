@@ -50,7 +50,6 @@ def is_gregorian_leap_year(gc_year):
 def et_new_year_gregorian(et_year):
     """Gregorian date on which the given Ethiopian year begins."""
     gc_year = et_year + 7
-    # Ethiopian New Year falls on Sep 12 when the following Gregorian year is leap.
     start_day = 12 if is_gregorian_leap_year(gc_year + 1) else 11
     return datetime(gc_year, 9, start_day)
 
@@ -63,8 +62,6 @@ def et_to_gc(et_year, et_month, et_day):
 
 
 def gc_to_et_date(gc_date):
-    """Convert a Gregorian date object to an Ethiopian (year, month, day) tuple."""
-    # Test the Ethiopian year that starts in this Gregorian year first.
     candidate_year = gc_date.year - 7
     start = et_new_year_gregorian(candidate_year)
     if gc_date < start:
@@ -85,7 +82,6 @@ def gc_to_et(gc_year, gc_month, gc_day):
 
 
 def parse_flexible_date(date_text):
-    """Parse DD/MM/YYYY into numeric parts; actual validation depends on chosen calendar."""
     raw = date_text.strip().split("\n")[0].strip()
     raw = " ".join(raw.split())
     for sep in ["-", ",", ".", " "]:
@@ -250,7 +246,6 @@ def db_save_broker(broker):
 
 
 def db_create_tracking_session(req, request_index):
-    """Create a unique tracking code after a cargo/truck connection is fully approved."""
     if req.get("type") == "cargo":
         cargo_index = req.get("cargo_index")
         if not isinstance(cargo_index, int) or not (0 <= cargo_index < len(cargo_posts)):
@@ -438,7 +433,6 @@ def vehicle_keyboard(prefix="vehicle"):
     ])
 
 def calendar_keyboard():
-    # Cargo loading dates are entered using the Ethiopian calendar only.
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🇪🇹 የኢትዮጵያ ካላንደር (EC)", callback_data="cal_et")],
     ])
@@ -656,6 +650,7 @@ async def subscribed_check_callback(update, context):
             "እባክዎ በመጀመሪያ Subscribe ያድርጉ፣ ከዚያ ይህን ይጫኑ።",
             show_alert=True
         )
+
 # ==================================================
 # CARGO POSTING
 # ==================================================
@@ -807,7 +802,6 @@ async def cargo_date(update, context):
         )
         return CARGO_DATE
 
-    # Keep the existing one-month booking window, but compare real Gregorian dates.
     max_date = today + timedelta(days=30)
     if given_date > max_date:
         await update.message.reply_text(
@@ -1397,7 +1391,6 @@ async def admin_delete_broker(update, context):
     await query.edit_message_text(
         "✅ **የጭነት ደላላው ተሰርዟል።**"
     )
-
 # ==================================================
 # FIND CARGO
 # ==================================================
@@ -1558,6 +1551,7 @@ async def already_selected_callback(update, context):
         "እባክዎ ሌላ ተስማሚ ይምረጡ።",
         show_alert=True
     )
+
 # ==================================================
 # CARGO CONNECTION REQUEST
 # ==================================================
@@ -1565,6 +1559,7 @@ async def already_selected_callback(update, context):
 async def connection_request(update, context):
     query = update.callback_query
     await query.answer()
+    print(f"[DEBUG] connection_request called: {query.data}")
 
     index = int(query.data.split("_")[1])
 
@@ -1620,6 +1615,7 @@ async def connection_request(update, context):
 async def truck_connection_request(update, context):
     query = update.callback_query
     await query.answer()
+    print(f"[DEBUG] truck_connection_request called: {query.data}")
 
     index = int(query.data.split("_")[1])
 
@@ -1670,10 +1666,10 @@ async def truck_connection_request(update, context):
 
 # ==================================================
 # CONNECT_NAME → CONNECT_PHONE → CONNECT_TYPE
-# (🔴 ተስተካክሏል — 3ኛ ደረጃ አድራሻ ይጠይቃል)
 # ==================================================
 
 async def connect_name(update, context):
+    print(f"[DEBUG] connect_name called for {update.effective_user.id}: {update.message.text}")
     info = context.user_data.get("connect_info", {})
     info["name"] = update.message.text.strip().split("\n")[0].strip()
     context.user_data["connect_info"] = info
@@ -1696,7 +1692,6 @@ async def connect_phone(update, context):
     info["phone"] = phone
     context.user_data["connect_info"] = info
 
-    # 🔴 ለውጥ 1 — 3ኛ ደረጃ አድራሻ ብቻ ይጠይቃል (ሁለቱም ዓይነት)
     await update.message.reply_text(
         "3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።\n"
         "ምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር"
@@ -1707,7 +1702,6 @@ async def connect_type(update, context):
     info = context.user_data.get("connect_info", {})
     text = update.message.text.strip().split("\n")[0].strip()
 
-    # 🔴 ለውጥ 2 — truck_type/cargo_info ፋንታ requester_address
     info["requester_address"] = text
 
     context.user_data["connect_info"] = info
@@ -1723,7 +1717,6 @@ async def connect_type(update, context):
             "requester_name": info.get("name", requester.full_name),
             "requester_username": info.get("requester_username", ""),
             "requester_phone": info.get("phone", ""),
-            # 🔴 ለውጥ 3 — requester_truck_type ፋንታ requester_address
             "requester_address": info.get("requester_address", ""),
             "requester_plate": "",
             "status": "admin_confirming",
@@ -1749,7 +1742,6 @@ async def connect_type(update, context):
             "requester_name": info.get("name", requester.full_name),
             "requester_username": info.get("requester_username", ""),
             "requester_phone": info.get("phone", ""),
-            # 🔴 ለውጥ 4 — requester_cargo_info ፋንታ requester_address
             "requester_address": info.get("requester_address", ""),
             "requester_route": "",
             "status": "admin_confirming",
@@ -1784,7 +1776,6 @@ async def connect_type(update, context):
 
 # ==================================================
 # SEND ADMIN NOTIFICATION (1 ጊዜ ብቻ)
-# (🔴 ተስተካክሏል — አድራሻ ያሳያል)
 # ==================================================
 
 async def send_admin_notification(context, req_index):
@@ -1819,7 +1810,6 @@ async def send_admin_notification(context, req_index):
             f"   • ስም: {req.get('requester_name', 'N/A')}\n"
             f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
             f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-            # 🔴 ለውጥ 5 — የመኪና አይነት ፋንታ አድራሻ
             f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "📌 **የግንኙነት ጥያቄ ያቀረቡ ደንበኞች አሉ!**\n\n"
@@ -1849,7 +1839,6 @@ async def send_admin_notification(context, req_index):
             f"   • ስም: {req.get('requester_name', 'N/A')}\n"
             f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
             f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-            # 🔴 ለውጥ 6 — የጭነት አይነት ፋንታ አድራሻ
             f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "📌 **የግንኙነት ጥያቄ ያቀረቡ ደንበኞች አሉ!**\n\n"
@@ -1865,7 +1854,6 @@ async def send_admin_notification(context, req_index):
             )
         except Exception:
             pass
-
 # ==================================================
 # ADMIN RIGHT CONFIRM
 # ==================================================
@@ -2041,7 +2029,6 @@ async def admin_clear_notification(update, context):
 
 # ==================================================
 # SHOW CONNECTION REQUESTS
-# (🔴 ተስተካክሏል — አድራሻ ያሳያል)
 # ==================================================
 
 async def show_connection_requests(update, context):
@@ -2094,7 +2081,6 @@ async def show_connection_requests(update, context):
                 f"   • ስም: {req.get('requester_name', 'N/A')}\n"
                 f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
                 f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-                # 🔴 ለውጥ 7 — የጭነት አይነት ፋንታ አድራሻ
                 f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
                 f"📌 ሁኔታ: {req['status']}"
             )
@@ -2122,7 +2108,6 @@ async def show_connection_requests(update, context):
                 f"   • ስም: {req.get('requester_name', 'N/A')}\n"
                 f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
                 f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-                # 🔴 ለውጥ 8 — የመኪና አይነት ፋንታ አድራሻ
                 f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
                 f"📌 ሁኔታ: {req['status']}"
             )
@@ -2785,12 +2770,12 @@ async def admin_payment_action(update, context):
             )
         except Exception:
             pass
+
 # ==================================================
-# TANA CARGO TRACKING — TELEGRAM LOCATION MVP
+# TANA CARGO TRACKING
 # ==================================================
 
 async def tracking_menu(update, context):
-    """Show driver location-update and customer tracking options."""
     context.user_data.pop("tracking_update_code", None)
     context.user_data.pop("tracking_lookup_waiting", None)
     keyboard = InlineKeyboardMarkup([
@@ -3055,9 +3040,75 @@ async def share_full_information(index, context):
             await context.bot.send_message(chat_id=uid, text=msg)
         except Exception:
             pass
+# ==================================================
+# 🔴 አዲስ ማስተካከያ 1 — STALE STATE CLEANER
+# ምናሌ ሲነካ ያልተጠናቀቁ ሂደቶችን ሁሉ ያጸዳል
+# ==================================================
+
+def clear_stale_user_state(context, keep=()):
+    """ምናኔ ሲነካ ያልተጠናቀቁ ሂደቶችን ሁሉ ያጸዳል።
+    ይህ connect_info, sending_admin_message, cargo, truck ወዘተ
+    ቀሪ ሆነው ወደተሳሳተ ቦታ እንዳይሄዱ ይከላከላል።"""
+    for key in ("cargo", "truck", "broker", "owner",
+                "connect_info", "sending_admin_message",
+                "tracking_update_code", "tracking_lookup_waiting"):
+        if key not in keep:
+            context.user_data.pop(key, None)
+
 
 # ==================================================
-# TEXT ROUTER
+# 🔴 አዲስ ማስተካከያ 2 — CONNECT FALLBACK ROUTER
+# Conversation state ካልተዘረጋ (timeout ወይም ሌላ ችግር)
+# ግን connect_info አለ — በ connect_info ውስጥ ባለው መረጃ መሰረት
+# ቀጣዩን ደረጃ ያስኬዳል። ዝም አይልም።
+# ==================================================
+
+async def connect_fallback_router(update, context):
+    info = context.user_data.get("connect_info")
+    if not info:
+        return
+
+    text = update.message.text.strip().split("\n")[0].strip()
+    if not text:
+        return
+
+    name = (info.get("name") or "").strip()
+    phone = (info.get("phone") or "").strip()
+    address = (info.get("requester_address") or "").strip()
+
+    # 1ኛ ደረጃ — ስም አልተሞላም
+    if not name:
+        info["name"] = text
+        context.user_data["connect_info"] = info
+        await update.message.reply_text(
+            "2️⃣ **ስልክ ቁጥርዎን** ይጻፉ።\n"
+            "በ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\n"
+            "ምሳሌ፦ 0912345678"
+        )
+        return
+
+    # 2ኛ ደረጃ — ስልክ አልተሞላም
+    if not phone:
+        is_valid, error = validate_phone(text)
+        if not is_valid:
+            await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
+            return
+        info["phone"] = text
+        context.user_data["connect_info"] = info
+        await update.message.reply_text(
+            "3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።\n"
+            "ምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር"
+        )
+        return
+
+    # 3ኛ ደረጃ — አድራሻ አልተሞላም → ሂደቱን ጨርስ
+    if not address:
+        await connect_type(update, context)
+        return
+
+
+# ==================================================
+# TEXT ROUTER (🔴 ተስተካክሏል — fallback router ይጠራል)
 # ==================================================
 
 async def text_router(update, context):
@@ -3069,14 +3120,16 @@ async def text_router(update, context):
     if context.user_data.get("sending_admin_message"):
         return await handle_user_message(update, context)
 
+    # 🔴 ለውጥ — ዝም ከመላት ይልቅ fallback router ይጥራ
     if context.user_data.get("connect_info"):
-        return
+        return await connect_fallback_router(update, context)
 
     if get_payment_index(user_id) is not None:
         return await receipt_message(update, context)
 
     if get_negotiation_index(user_id) is not None:
         return await submit_price(update, context)
+
 
 # ==================================================
 # START / PROFILE / SUPPORT / ABOUT / PAYMENT / CANCEL
@@ -3288,15 +3341,13 @@ MASTER_MENU_REGEX = (
 )
 
 # ==================================================
-# MENU ROUTER — ማንኛውንም ምናሌ ሲነካ Subscribe Gate
+# MENU ROUTER (🔴 ተስተካክሏል — clear_stale_user_state ተጨምሯል)
 # ==================================================
 
 async def menu_router(update, context):
-    """ማንኛውንም ምናሌ ሲነካ — Subscribe Gate ያሳያል"""
     text = update.message.text
     uid = update.effective_user.id
 
-    # ⚠️ Subscribe ማረጋገጫ
     is_subscribed = await check_subscription(uid, context)
     if not is_subscribed:
         await update.message.reply_text(
@@ -3316,8 +3367,9 @@ async def menu_router(update, context):
         )
         return ConversationHandler.END
 
-    # ✅ Subscribe ካደረገ — ወደ ጉዳዩ ቀጥል
     context.user_data["subscribed"] = True
+    # 🔴 ለውጥ — ምናሌ ሲነካ ሁሉም የቆዩ state ይጸዳል
+    clear_stale_user_state(context)
 
     if text == "🚚 ጭነት መለጠፍ":
         return await cargo_start(update, context)
@@ -3359,19 +3411,13 @@ async def menu_router(update, context):
     return ConversationHandler.END
 
 # ==================================================
-# MENU INTERRUPT — በየ state ውስጥ ሌላ ምናሌ ሲነካ
+# MENU INTERRUPT (🔴 ተስተካክሏል — clear_stale_user_state)
 # ==================================================
 
 async def menu_interrupt(update, context):
-    """በማንኛውም state ውስጥ ሌላ ምናሌ ሲነካ — የአሁኑን ሂደት ሰርዞ ወደ አዲሱ ይሄዳል"""
+    # 🔴 ለውጥ — pop መስመሮች በ clear_stale_user_state ተተክተዋል
+    clear_stale_user_state(context)
     text = update.message.text
-
-    context.user_data.pop("cargo", None)
-    context.user_data.pop("truck", None)
-    context.user_data.pop("broker", None)
-    context.user_data.pop("owner", None)
-    context.user_data.pop("connect_info", None)
-    context.user_data.pop("sending_admin_message", None)
 
     if text == "🚚 ጭነት መለጠፍ":
         return await cargo_start(update, context)
@@ -3414,7 +3460,6 @@ async def menu_interrupt(update, context):
 
 # ==================================================
 # MAIN
-# (🔴 ተስተካክሏል — connection callbacks ወደ Conversation entry_points)
 # ==================================================
 
 def main():
@@ -3430,9 +3475,7 @@ def main():
     application = Application.builder().token(TOKEN).build()
     application.add_error_handler(error_handler)
 
-    # ==================================================
     # Simple commands
-    # ==================================================
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cargo", cargo_start))
     application.add_handler(CommandHandler("truck", truck_start))
@@ -3445,9 +3488,7 @@ def main():
     application.add_handler(CommandHandler("broker", broker_start))
     application.add_handler(CommandHandler("track", tracking_menu))
 
-    # ==================================================
     # Master Conversation
-    # ==================================================
     master_conversation = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
@@ -3467,7 +3508,6 @@ def main():
             CommandHandler("broker", broker_start),
             CommandHandler("cargo", cargo_start),
             CommandHandler("truck", truck_start),
-            # 🔴 ለውጥ 9 — connection callbacks ወደ Conversation ውስጥ
             CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"),
             CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"),
         ],
@@ -3581,9 +3621,7 @@ def main():
     )
     application.add_handler(master_conversation)
 
-    # ==================================================
-    # Tracking callbacks and location/text inputs
-    # ==================================================
+    # Tracking callbacks
     application.add_handler(CallbackQueryHandler(tracking_driver_choose, pattern=r"^tracking_driver$"))
     application.add_handler(CallbackQueryHandler(tracking_customer_choose, pattern=r"^tracking_customer$"))
     application.add_handler(CallbackQueryHandler(tracking_begin_location, pattern=r"^tracking_update:[A-Z0-9]+$"))
@@ -3591,70 +3629,48 @@ def main():
     application.add_handler(MessageHandler(filters.LOCATION, tracking_location_handler), group=1)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_text_handler), group=1)
 
-    # ==================================================
-    # Connection callbacks
-    # ==================================================
-    # 🔴 ለውጥ 10 — connection_request እና truck_connection_request
-    # ወደ Conversation entry_points ተዛውረዋል። ከዚህ በታች አልተመዘገቡም።
+    # Connection callbacks — already_selected only
     application.add_handler(CallbackQueryHandler(already_selected_callback, pattern=r"^already_selected$"))
 
-    # ==================================================
-    # Subscribe check callback
-    # ==================================================
+    # Subscribe check
     application.add_handler(CallbackQueryHandler(subscribed_check_callback, pattern=r"^subscribed_check$"))
 
-    # ==================================================
     # Broker callbacks
-    # ==================================================
     application.add_handler(CallbackQueryHandler(broker_right_confirm, pattern=r"^brokerright_\d+$"))
     application.add_handler(CallbackQueryHandler(broker_x_delete, pattern=r"^brokerxdelete_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_delete_broker, pattern=r"^admindeletebroker_\d+$"))
 
-    # ==================================================
     # Admin right/X/Clear
-    # ==================================================
     application.add_handler(CallbackQueryHandler(admin_right_confirm, pattern=r"^adminright_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_x_delete, pattern=r"^adminxdelete_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_clear_notification, pattern=r"^adminclear_\d+$"))
 
-    # ==================================================
-    # Negotiation buttons
-    # ==================================================
+    # Negotiation
     application.add_handler(CallbackQueryHandler(agree_price, pattern=r"^agreeprice_\d+_\d+$"))
     application.add_handler(CallbackQueryHandler(reject_price_button, pattern=r"^rejectprice_\d+_\d+$"))
 
-    # ==================================================
     # Admin payment
-    # ==================================================
     application.add_handler(CallbackQueryHandler(
         admin_payment_action,
         pattern=r"^admin(approve|reject)_\d+_(requester|other)_\d+$"
     ))
 
-    # ==================================================
     # Admin delete connection
-    # ==================================================
     application.add_handler(CallbackQueryHandler(
         admin_delete_connection,
         pattern=r"^admindeleteconnection_\d+$"
     ))
 
-    # ==================================================
     # Photo/Receipt
-    # ==================================================
     application.add_handler(MessageHandler(filters.PHOTO, receipt_photo))
     application.add_handler(MessageHandler(
         filters.Document.ALL & ~filters.COMMAND, receipt_photo
     ))
 
-    # ==================================================
     # Text router
-    # ==================================================
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
-    # ==================================================
     # Job queue
-    # ==================================================
     if application.job_queue:
         application.job_queue.run_repeating(clean_expired_posts, interval=3600, first=60)
         application.job_queue.run_repeating(auto_delete_messages, interval=60, first=30)
