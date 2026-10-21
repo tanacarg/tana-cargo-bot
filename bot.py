@@ -358,7 +358,6 @@ def db_finish_tracking(tracking_code):
         conn.commit()
     finally:
         conn.close()
-
 # ==================================================
 # MEMORY
 # ==================================================
@@ -1398,6 +1397,7 @@ async def admin_delete_broker(update, context):
     await query.edit_message_text(
         "✅ **የጭነት ደላላው ተሰርዟል።**"
     )
+
 # ==================================================
 # FIND CARGO
 # ==================================================
@@ -1558,7 +1558,6 @@ async def already_selected_callback(update, context):
         "እባክዎ ሌላ ተስማሚ ይምረጡ።",
         show_alert=True
     )
-
 # ==================================================
 # CARGO CONNECTION REQUEST
 # ==================================================
@@ -1671,6 +1670,7 @@ async def truck_connection_request(update, context):
 
 # ==================================================
 # CONNECT_NAME → CONNECT_PHONE → CONNECT_TYPE
+# (🔴 ተስተካክሏል — 3ኛ ደረጃ አድራሻ ይጠይቃል)
 # ==================================================
 
 async def connect_name(update, context):
@@ -1696,26 +1696,19 @@ async def connect_phone(update, context):
     info["phone"] = phone
     context.user_data["connect_info"] = info
 
-    if info.get("type") == "cargo":
-        await update.message.reply_text(
-            "3️⃣ ጭነቱን ለማጓጓዝ የሚጠቀሙበትን **የመኪና አይነት** ይጻፉ።\n"
-            "ምሳሌ፦ Isuzu / ካሶኒ / ኦባማ / ተሳቢ"
-        )
-    else:
-        await update.message.reply_text(
-            "3️⃣ **የጭነት አይነት** እና **የጭነት አድራሻ** ይጻፉ።\n"
-            "ምሳሌ፦ ሲሚንቶ ባህርዳር"
-        )
+    # 🔴 ለውጥ 1 — 3ኛ ደረጃ አድራሻ ብቻ ይጠይቃል (ሁለቱም ዓይነት)
+    await update.message.reply_text(
+        "3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።\n"
+        "ምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር"
+    )
     return CONNECT_TYPE
 
 async def connect_type(update, context):
     info = context.user_data.get("connect_info", {})
     text = update.message.text.strip().split("\n")[0].strip()
 
-    if info.get("type") == "cargo":
-        info["truck_type"] = text
-    else:
-        info["cargo_info"] = text
+    # 🔴 ለውጥ 2 — truck_type/cargo_info ፋንታ requester_address
+    info["requester_address"] = text
 
     context.user_data["connect_info"] = info
     requester = update.effective_user
@@ -1730,7 +1723,8 @@ async def connect_type(update, context):
             "requester_name": info.get("name", requester.full_name),
             "requester_username": info.get("requester_username", ""),
             "requester_phone": info.get("phone", ""),
-            "requester_truck_type": info.get("truck_type", ""),
+            # 🔴 ለውጥ 3 — requester_truck_type ፋንታ requester_address
+            "requester_address": info.get("requester_address", ""),
             "requester_plate": "",
             "status": "admin_confirming",
             "offers": [], "current_offer": None, "current_offer_by": None,
@@ -1755,7 +1749,8 @@ async def connect_type(update, context):
             "requester_name": info.get("name", requester.full_name),
             "requester_username": info.get("requester_username", ""),
             "requester_phone": info.get("phone", ""),
-            "requester_cargo_info": info.get("cargo_info", ""),
+            # 🔴 ለውጥ 4 — requester_cargo_info ፋንታ requester_address
+            "requester_address": info.get("requester_address", ""),
             "requester_route": "",
             "status": "admin_confirming",
             "offers": [], "current_offer": None, "current_offer_by": None,
@@ -1789,6 +1784,7 @@ async def connect_type(update, context):
 
 # ==================================================
 # SEND ADMIN NOTIFICATION (1 ጊዜ ብቻ)
+# (🔴 ተስተካክሏል — አድራሻ ያሳያል)
 # ==================================================
 
 async def send_admin_notification(context, req_index):
@@ -1823,7 +1819,8 @@ async def send_admin_notification(context, req_index):
             f"   • ስም: {req.get('requester_name', 'N/A')}\n"
             f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
             f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-            f"   • የመኪና አይነት: {req.get('requester_truck_type', 'N/A')}\n\n"
+            # 🔴 ለውጥ 5 — የመኪና አይነት ፋንታ አድራሻ
+            f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "📌 **የግንኙነት ጥያቄ ያቀረቡ ደንበኞች አሉ!**\n\n"
             "⏰ **እባክዎን ቶሎ ያናግሯቸው።**\n\n"
@@ -1852,7 +1849,8 @@ async def send_admin_notification(context, req_index):
             f"   • ስም: {req.get('requester_name', 'N/A')}\n"
             f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
             f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-            f"   • የጭነት አይነት: {req.get('requester_cargo_info', 'N/A')}\n\n"
+            # 🔴 ለውጥ 6 — የጭነት አይነት ፋንታ አድራሻ
+            f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "📌 **የግንኙነት ጥያቄ ያቀረቡ ደንበኞች አሉ!**\n\n"
             "⏰ **እባክዎን ቶሎ ያናግሯቸው።**\n\n"
@@ -2043,6 +2041,7 @@ async def admin_clear_notification(update, context):
 
 # ==================================================
 # SHOW CONNECTION REQUESTS
+# (🔴 ተስተካክሏል — አድራሻ ያሳያል)
 # ==================================================
 
 async def show_connection_requests(update, context):
@@ -2095,7 +2094,8 @@ async def show_connection_requests(update, context):
                 f"   • ስም: {req.get('requester_name', 'N/A')}\n"
                 f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
                 f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-                f"   • የጭነት አይነት: {req.get('requester_cargo_info', 'N/A')}\n\n"
+                # 🔴 ለውጥ 7 — የጭነት አይነት ፋንታ አድራሻ
+                f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
                 f"📌 ሁኔታ: {req['status']}"
             )
         else:
@@ -2122,7 +2122,8 @@ async def show_connection_requests(update, context):
                 f"   • ስም: {req.get('requester_name', 'N/A')}\n"
                 f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
                 f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-                f"   • የመኪና አይነት: {req.get('requester_truck_type', 'N/A')}\n\n"
+                # 🔴 ለውጥ 8 — የመኪና አይነት ፋንታ አድራሻ
+                f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
                 f"📌 ሁኔታ: {req['status']}"
             )
 
@@ -2168,6 +2169,7 @@ async def admin_delete_connection(update, context):
 
     connection_requests[index]["status"] = "deleted"
     await query.edit_message_text("✅ ተሰርዟል።")
+
 # ==================================================
 # HANDLE USER MESSAGE TO ADMINS
 # ==================================================
@@ -2783,7 +2785,6 @@ async def admin_payment_action(update, context):
             )
         except Exception:
             pass
-
 # ==================================================
 # TANA CARGO TRACKING — TELEGRAM LOCATION MVP
 # ==================================================
@@ -3181,6 +3182,7 @@ async def cancel(update, context):
         reply_markup=main_menu(update.effective_user.id)
     )
     return ConversationHandler.END
+
 # ==================================================
 # ERROR HANDLER
 # ==================================================
@@ -3412,6 +3414,7 @@ async def menu_interrupt(update, context):
 
 # ==================================================
 # MAIN
+# (🔴 ተስተካክሏል — connection callbacks ወደ Conversation entry_points)
 # ==================================================
 
 def main():
@@ -3464,6 +3467,9 @@ def main():
             CommandHandler("broker", broker_start),
             CommandHandler("cargo", cargo_start),
             CommandHandler("truck", truck_start),
+            # 🔴 ለውጥ 9 — connection callbacks ወደ Conversation ውስጥ
+            CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"),
+            CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"),
         ],
         states={
             CARGO_FROM: [
@@ -3588,8 +3594,8 @@ def main():
     # ==================================================
     # Connection callbacks
     # ==================================================
-    application.add_handler(CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"))
-    application.add_handler(CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"))
+    # 🔴 ለውጥ 10 — connection_request እና truck_connection_request
+    # ወደ Conversation entry_points ተዛውረዋል። ከዚህ በታች አልተመዘገቡም።
     application.add_handler(CallbackQueryHandler(already_selected_callback, pattern=r"^already_selected$"))
 
     # ==================================================
