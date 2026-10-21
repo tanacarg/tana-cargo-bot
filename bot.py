@@ -48,7 +48,6 @@ def is_gregorian_leap_year(gc_year):
 
 
 def et_new_year_gregorian(et_year):
-    """Gregorian date on which the given Ethiopian year begins."""
     gc_year = et_year + 7
     start_day = 12 if is_gregorian_leap_year(gc_year + 1) else 11
     return datetime(gc_year, 9, start_day)
@@ -1094,7 +1093,6 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
-
 # ==================================================
 # BROKER REGISTRATION
 # ==================================================
@@ -1391,6 +1389,7 @@ async def admin_delete_broker(update, context):
     await query.edit_message_text(
         "✅ **የጭነት ደላላው ተሰርዟል።**"
     )
+
 # ==================================================
 # FIND CARGO
 # ==================================================
@@ -1856,6 +1855,7 @@ async def send_admin_notification(context, req_index):
             pass
 # ==================================================
 # ADMIN RIGHT CONFIRM
+# 🔴 ተስተካክሏል — asyncio.sleep(10*60) ተወግዷል
 # ==================================================
 
 async def admin_right_confirm(update, context):
@@ -1910,14 +1910,12 @@ async def admin_right_confirm(update, context):
         "🙏 እናመሰግናለን!"
     )
 
-    for i in range(2):
-        try:
-            await context.bot.send_message(chat_id=seeker_id, text=seeker_text)
-            req["seeker_notified"] = True
-        except Exception:
-            pass
-        if i == 0:
-            await asyncio.sleep(10 * 60)
+    # 🔴 ለውጥ — ማሳወቂያውን አንድ ጊዜ ብቻ ላክ፤ sleep አያስፈልግም
+    try:
+        await context.bot.send_message(chat_id=seeker_id, text=seeker_text)
+        req["seeker_notified"] = True
+    except Exception:
+        pass
 
     owner_id = other_party_id(req)
 
@@ -1948,14 +1946,12 @@ async def admin_right_confirm(update, context):
             "🙏 እናመሰግናለን!"
         )
 
-    for i in range(2):
-        try:
-            await context.bot.send_message(chat_id=owner_id, text=owner_text)
-            req["owner_notified"] = True
-        except Exception:
-            pass
-        if i == 0:
-            await asyncio.sleep(10 * 60)
+    # 🔴 ለውጥ — ማሳወቂያውን አንድ ጊዜ ብቻ ላክ፤ sleep አያስፈልግም
+    try:
+        await context.bot.send_message(chat_id=owner_id, text=owner_text)
+        req["owner_notified"] = True
+    except Exception:
+        pass
 
 # ==================================================
 # ADMIN X DELETE
@@ -3041,26 +3037,19 @@ async def share_full_information(index, context):
         except Exception:
             pass
 # ==================================================
-# 🔴 አዲስ ማስተካከያ 1 — STALE STATE CLEANER
-# ምናሌ ሲነካ ያልተጠናቀቁ ሂደቶችን ሁሉ ያጸዳል
+# STALE STATE CLEANER
 # ==================================================
 
 def clear_stale_user_state(context, keep=()):
-    """ምናኔ ሲነካ ያልተጠናቀቁ ሂደቶችን ሁሉ ያጸዳል።
-    ይህ connect_info, sending_admin_message, cargo, truck ወዘተ
-    ቀሪ ሆነው ወደተሳሳተ ቦታ እንዳይሄዱ ይከላከላል።"""
+    """ምናሌ ሲነካ ያልተጠናቀቁ ሂደቶችን ሁሉ ያጸዳል።"""
     for key in ("cargo", "truck", "broker", "owner",
                 "connect_info", "sending_admin_message",
                 "tracking_update_code", "tracking_lookup_waiting"):
         if key not in keep:
             context.user_data.pop(key, None)
 
-
 # ==================================================
-# 🔴 አዲስ ማስተካከያ 2 — CONNECT FALLBACK ROUTER
-# Conversation state ካልተዘረጋ (timeout ወይም ሌላ ችግር)
-# ግን connect_info አለ — በ connect_info ውስጥ ባለው መረጃ መሰረት
-# ቀጣዩን ደረጃ ያስኬዳል። ዝም አይልም።
+# CONNECT FALLBACK ROUTER
 # ==================================================
 
 async def connect_fallback_router(update, context):
@@ -3076,7 +3065,6 @@ async def connect_fallback_router(update, context):
     phone = (info.get("phone") or "").strip()
     address = (info.get("requester_address") or "").strip()
 
-    # 1ኛ ደረጃ — ስም አልተሞላም
     if not name:
         info["name"] = text
         context.user_data["connect_info"] = info
@@ -3087,7 +3075,6 @@ async def connect_fallback_router(update, context):
         )
         return
 
-    # 2ኛ ደረጃ — ስልክ አልተሞላም
     if not phone:
         is_valid, error = validate_phone(text)
         if not is_valid:
@@ -3101,14 +3088,12 @@ async def connect_fallback_router(update, context):
         )
         return
 
-    # 3ኛ ደረጃ — አድራሻ አልተሞላም → ሂደቱን ጨርስ
     if not address:
         await connect_type(update, context)
         return
 
-
 # ==================================================
-# TEXT ROUTER (🔴 ተስተካክሏል — fallback router ይጠራል)
+# TEXT ROUTER
 # ==================================================
 
 async def text_router(update, context):
@@ -3120,7 +3105,6 @@ async def text_router(update, context):
     if context.user_data.get("sending_admin_message"):
         return await handle_user_message(update, context)
 
-    # 🔴 ለውጥ — ዝም ከመላት ይልቅ fallback router ይጥራ
     if context.user_data.get("connect_info"):
         return await connect_fallback_router(update, context)
 
@@ -3129,7 +3113,6 @@ async def text_router(update, context):
 
     if get_negotiation_index(user_id) is not None:
         return await submit_price(update, context)
-
 
 # ==================================================
 # START / PROFILE / SUPPORT / ABOUT / PAYMENT / CANCEL
@@ -3341,7 +3324,7 @@ MASTER_MENU_REGEX = (
 )
 
 # ==================================================
-# MENU ROUTER (🔴 ተስተካክሏል — clear_stale_user_state ተጨምሯል)
+# MENU ROUTER
 # ==================================================
 
 async def menu_router(update, context):
@@ -3368,7 +3351,6 @@ async def menu_router(update, context):
         return ConversationHandler.END
 
     context.user_data["subscribed"] = True
-    # 🔴 ለውጥ — ምናሌ ሲነካ ሁሉም የቆዩ state ይጸዳል
     clear_stale_user_state(context)
 
     if text == "🚚 ጭነት መለጠፍ":
@@ -3411,11 +3393,10 @@ async def menu_router(update, context):
     return ConversationHandler.END
 
 # ==================================================
-# MENU INTERRUPT (🔴 ተስተካክሏል — clear_stale_user_state)
+# MENU INTERRUPT
 # ==================================================
 
 async def menu_interrupt(update, context):
-    # 🔴 ለውጥ — pop መስመሮች በ clear_stale_user_state ተተክተዋል
     clear_stale_user_state(context)
     text = update.message.text
 
@@ -3460,6 +3441,7 @@ async def menu_interrupt(update, context):
 
 # ==================================================
 # MAIN
+# 🔴 ተስተካክሏል — concurrent_updates(True) ተጨምሯል
 # ==================================================
 
 def main():
@@ -3472,7 +3454,9 @@ def main():
     except Exception as e:
         print(f"❌ DB INIT ERROR: {e}")
 
-    application = Application.builder().token(TOKEN).build()
+    # 🔴 ለውጥ — concurrent_updates(True) ቢኖር አንድ handler ቢዘገይ
+    # ሌሎች ተጠቃሚዎች አይጎዱም። ሁሉም ምናሌዎች በትይዩ ይሰራሉ።
+    application = Application.builder().token(TOKEN).concurrent_updates(True).build()
     application.add_error_handler(error_handler)
 
     # Simple commands
@@ -3629,7 +3613,7 @@ def main():
     application.add_handler(MessageHandler(filters.LOCATION, tracking_location_handler), group=1)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_text_handler), group=1)
 
-    # Connection callbacks — already_selected only
+    # Connection callbacks
     application.add_handler(CallbackQueryHandler(already_selected_callback, pattern=r"^already_selected$"))
 
     # Subscribe check
