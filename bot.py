@@ -49,7 +49,6 @@ def get_traccar_location(device_id: str):
     """ከTraccar ሰርቨር የመጨረሻውን የመኪና ቦታ ያመጣል"""
     try:
         headers = {"Authorization": f"Bearer {TRACCAR_TOKEN}"}
-        # 1. የመሳሪያውን መረጃ ማግኘት
         url_dev = f"{TRACCAR_URL}/api/devices?uniqueId={device_id}"
         response = requests.get(url_dev, headers=headers, timeout=10)
         
@@ -65,7 +64,6 @@ def get_traccar_location(device_id: str):
         if not position_id:
             return None
 
-        # 2. በpositionId በመጠቀም ትክክለኛውን መገኛ (Latitude/Longitude) ማግኘት
         url_pos = f"{TRACCAR_URL}/api/positions?id={position_id}"
         pos_response = requests.get(url_pos, headers=headers, timeout=10)
         positions = pos_response.json()
@@ -1896,7 +1894,6 @@ async def send_admin_notification(context, req_index):
             pass
 # ==================================================
 # ADMIN RIGHT CONFIRM
-# 🔴 ተስተካክሏል — asyncio.sleep(10*60) ተወግዷል
 # ==================================================
 
 async def admin_right_confirm(update, context):
@@ -2807,8 +2804,33 @@ async def admin_payment_action(update, context):
             pass
 
 # ==================================================
-# TANA CARGO TRACKING
+# TANA CARGO TRACKING & TEST
 # ==================================================
+
+async def test_tracking_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ለሙከራ ያህል የክትትል ኮድ ይፈጥራል"""
+    user_id = update.effective_user.id
+    code = "TCTEST123"
+    
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tracking_sessions WHERE tracking_code = ?", (code,))
+        cursor.execute("""
+            INSERT INTO tracking_sessions (
+                tracking_code, request_type, driver_user_id, customer_user_id,
+                origin, destination, cargo_description, truck_description,
+                status, created_at
+            ) VALUES (?, 'cargo', ?, ?, 'Bahir Dar', 'Addis Ababa', 'Cement', 'Isuzu', 'in_transit', ?)
+        """, (code, user_id, user_id, datetime.now().astimezone().isoformat()))
+        conn.commit()
+    finally:
+        conn.close()
+
+    await update.message.reply_text(
+        f"✅ የሙከራ ኮድ ተፈጥሯል፦ `{code}`\n\n"
+        "አሁን ወደ '📍 የጭነት ክትትል' ሄደው '📦 ጭነቴን በኮድ መከታተል' ላይ ይህንን ኮድ ያስገቡ።"
+    )
 
 async def tracking_menu(update, context):
     context.user_data.pop("tracking_update_code", None)
@@ -2936,7 +2958,6 @@ async def tracking_show_result(update, context, record):
         f"📊 ሁኔታ፦ {status_labels.get(record.get('status'), record.get('status'))}\n"
     )
     
-    # 🔴 አዲስ ለውጥ፦ ከTraccar የመጣውን መረጃ መጠቀም
     loc = get_traccar_location(TRACCAR_DEVICE_ID)
     
     if loc and loc.get("latitude"):
@@ -2949,7 +2970,7 @@ async def tracking_show_result(update, context, record):
             f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n"
             "⚠️ ይህ የመጨረሻ የተላከ ቦታ ነው፤ የመኪናው በአሁኑ ሰከንድ ያለበት ቦታ መሆኑ አይረጋገጥም።"
         )
-    elif record.get("latitude") is not None: # የድሮ መረጃ (Telegram location)
+    elif record.get("latitude") is not None:
         lat = float(record["latitude"])
         lon = float(record["longitude"])
         map_url = f"https://maps.google.com/?q={lat},{lon}"
@@ -3090,7 +3111,6 @@ async def share_full_information(index, context):
 # ==================================================
 
 def clear_stale_user_state(context, keep=()):
-    """ምናሌ ሲነካ ያልተጠናቀቁ ሂደቶችን ሁሉ ያጸዳል።"""
     for key in ("cargo", "truck", "broker", "owner",
                 "connect_info", "sending_admin_message",
                 "tracking_update_code", "tracking_lookup_waiting"):
@@ -3490,7 +3510,6 @@ async def menu_interrupt(update, context):
 
 # ==================================================
 # MAIN
-# 🔴 ተስተካክሏል — concurrent_updates(True) ተጨምሯል
 # ==================================================
 
 def main():
@@ -3503,8 +3522,6 @@ def main():
     except Exception as e:
         print(f"❌ DB INIT ERROR: {e}")
 
-    # 🔴 ለውጥ — concurrent_updates(True) ቢኖር አንድ handler ቢዘገይ
-    # ሌሎች ተጠቃሚዎች አይጎዱም። ሁሉም ምናሌዎች በትይዩ ይሰራሉ።
     application = Application.builder().token(TOKEN).concurrent_updates(True).build()
     application.add_error_handler(error_handler)
 
@@ -3520,6 +3537,9 @@ def main():
     application.add_handler(CommandHandler("owner", owner_start))
     application.add_handler(CommandHandler("broker", broker_start))
     application.add_handler(CommandHandler("track", tracking_menu))
+    
+    # 🔴 አዲስ የሙከራ ኮድ ማዘዣ (Test track command)
+    application.add_handler(CommandHandler("testtrack", test_tracking_command))
 
     # Master Conversation
     master_conversation = ConversationHandler(
