@@ -3,6 +3,7 @@ import threading
 import sqlite3
 import asyncio
 import secrets
+import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -29,11 +30,59 @@ SUPPORT_PHONE_2 = "0912991128"
 BOT_USERNAME = "tanacargobot"
 CHANNEL_USERNAME = "tanapage"
 
+# Traccar Config
+TRACCAR_URL = "http://demo2.traccar.org"
+TRACCAR_TOKEN = "RjBEAiBc98uaEhRRlPGxO9_vgSO0ZpaM6RfAKBJ6wRYXgO_pZgIgPR5JRatK9XmfQXCwT9Xc-Di5OiLQHUviT9NF6RxwefZ7ImkiOjg5MjE4NDA2Mzc2MTgzNjE1NzUsInUiOjgzNjcsImUiOiIyMDI2LTEwLTI4VDIxOjAwOjAwLjAwMCswMDowMCJ9"
+TRACCAR_DEVICE_ID = "92643104"
+
 NEGOTIATION_TIMEOUT_SECONDS = 300
 CONVERSATION_TIMEOUT_SECONDS = 600
 CARGO_EXPIRY_HOURS = 72
 MESSAGE_AUTO_DELETE_SECONDS = 1800
 DB_PATH = "tana_cargo.db"
+
+# ==================================================
+# TRACCAR API FUNCTION
+# ==================================================
+
+def get_traccar_location(device_id: str):
+    """ከTraccar ሰርቨር የመጨረሻውን የመኪና ቦታ ያመጣል"""
+    try:
+        headers = {"Authorization": f"Bearer {TRACCAR_TOKEN}"}
+        # 1. የመሳሪያውን መረጃ ማግኘት
+        url_dev = f"{TRACCAR_URL}/api/devices?uniqueId={device_id}"
+        response = requests.get(url_dev, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"Traccar Error: {response.status_code}")
+            return None
+            
+        devices = response.json()
+        if not devices:
+            return None
+        
+        position_id = devices[0].get("positionId")
+        if not position_id:
+            return None
+
+        # 2. በpositionId በመጠቀም ትክክለኛውን መገኛ (Latitude/Longitude) ማግኘት
+        url_pos = f"{TRACCAR_URL}/api/positions?id={position_id}"
+        pos_response = requests.get(url_pos, headers=headers, timeout=10)
+        positions = pos_response.json()
+        
+        if not positions:
+            return None
+            
+        pos = positions[0]
+        return {
+            "latitude": pos.get("latitude"),
+            "longitude": pos.get("longitude"),
+            "address": pos.get("address", "አድራሻ አልተገኘም"),
+            "timestamp": pos.get("fixTime", "")[:16]
+        }
+    except Exception as e:
+        print(f"Traccar API Error: {e}")
+        return None
 
 # ==================================================
 # ETHIOPIAN CALENDAR
@@ -42,23 +91,19 @@ DB_PATH = "tana_cargo.db"
 def is_ethiopian_leap_year(et_year):
     return (et_year % 4) == 3
 
-
 def is_gregorian_leap_year(gc_year):
     return (gc_year % 4 == 0 and gc_year % 100 != 0) or (gc_year % 400 == 0)
-
 
 def et_new_year_gregorian(et_year):
     gc_year = et_year + 7
     start_day = 12 if is_gregorian_leap_year(gc_year + 1) else 11
     return datetime(gc_year, 9, start_day)
 
-
 def et_to_gc(et_year, et_month, et_day):
     max_day = 6 if et_month == 13 and is_ethiopian_leap_year(et_year) else 5 if et_month == 13 else 30
     if et_month < 1 or et_month > 13 or et_day < 1 or et_day > max_day:
         raise ValueError("Invalid Ethiopian date")
     return et_new_year_gregorian(et_year) + timedelta(days=(et_month - 1) * 30 + et_day - 1)
-
 
 def gc_to_et_date(gc_date):
     candidate_year = gc_date.year - 7
@@ -75,10 +120,8 @@ def gc_to_et_date(gc_date):
             raise ValueError("Gregorian date conversion outside Ethiopian year")
     return candidate_year, month, day
 
-
 def gc_to_et(gc_year, gc_month, gc_day):
     return gc_to_et_date(datetime(gc_year, gc_month, gc_day))
-
 
 def parse_flexible_date(date_text):
     raw = date_text.strip().split("\n")[0].strip()
@@ -95,7 +138,6 @@ def parse_flexible_date(date_text):
     if year < 1900 or year > 2100:
         return None, "ዓመት ትክክል አይደለም።"
     return {"day": day, "month": month, "year": year}, ""
-
 
 def convert_calendar(date_parts, calendar):
     day, month, year = date_parts["day"], date_parts["month"], date_parts["year"]
@@ -242,7 +284,6 @@ def db_save_broker(broker):
     ))
     conn.commit()
     conn.close()
-
 
 def db_create_tracking_session(req, request_index):
     if req.get("type") == "cargo":
@@ -929,7 +970,6 @@ async def cargo_price(update, context):
                 pass
 
     return ConversationHandler.END
-
 # ==================================================
 # TRUCK REGISTRATION
 # ==================================================
@@ -1093,6 +1133,7 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
+
 # ==================================================
 # BROKER REGISTRATION
 # ==================================================
@@ -1910,7 +1951,6 @@ async def admin_right_confirm(update, context):
         "🙏 እናመሰግናለን!"
     )
 
-    # 🔴 ለውጥ — ማሳወቂያውን አንድ ጊዜ ብቻ ላክ፤ sleep አያስፈልግም
     try:
         await context.bot.send_message(chat_id=seeker_id, text=seeker_text)
         req["seeker_notified"] = True
@@ -1946,7 +1986,6 @@ async def admin_right_confirm(update, context):
             "🙏 እናመሰግናለን!"
         )
 
-    # 🔴 ለውጥ — ማሳወቂያውን አንድ ጊዜ ብቻ ላክ፤ sleep አያስፈልግም
     try:
         await context.bot.send_message(chat_id=owner_id, text=owner_text)
         req["owner_notified"] = True
@@ -2888,7 +2927,7 @@ async def tracking_show_result(update, context, record):
     code = record["tracking_code"]
     status_labels = {"ready": "ጉዞ ለመጀመር ዝግጁ", "in_transit": "በመንገድ ላይ", "delivered": "ጉዞው ተጠናቋል"}
     msg = (
-        f"📦 **TANA CARGO — የጭነት ክትትል**\n\n"
+        f"📦 **TANA CARGO — የቀጥታ ክትትል**\n\n"
         f"🔑 ኮድ፦ `{code}`\n"
         f"📍 መነሻ/መረጃ፦ {record.get('origin') or 'አልተገለጸም'}\n"
         f"🏁 መድረሻ/መንገድ፦ {record.get('destination') or 'አልተገለጸም'}\n"
@@ -2896,18 +2935,28 @@ async def tracking_show_result(update, context, record):
         f"🚛 መኪና፦ {record.get('truck_description') or 'አልተገለጸም'}\n"
         f"📊 ሁኔታ፦ {status_labels.get(record.get('status'), record.get('status'))}\n"
     )
-    if record.get("latitude") is not None and record.get("longitude") is not None:
+    
+    # 🔴 አዲስ ለውጥ፦ ከTraccar የመጣውን መረጃ መጠቀም
+    loc = get_traccar_location(TRACCAR_DEVICE_ID)
+    
+    if loc and loc.get("latitude"):
+        lat = float(loc["latitude"])
+        lon = float(loc["longitude"])
+        map_url = f"https://maps.google.com/?q={lat},{lon}"
+        msg += (
+            f"\n📍 **የመጨረሻ ቦታ፦** {loc.get('address')}\n"
+            f"🕒 **የተላከበት ሰዓት፦** {loc.get('timestamp')}\n"
+            f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n"
+            "⚠️ ይህ የመጨረሻ የተላከ ቦታ ነው፤ የመኪናው በአሁኑ ሰከንድ ያለበት ቦታ መሆኑ አይረጋገጥም።"
+        )
+    elif record.get("latitude") is not None: # የድሮ መረጃ (Telegram location)
         lat = float(record["latitude"])
         lon = float(record["longitude"])
         map_url = f"https://maps.google.com/?q={lat},{lon}"
-        msg += (
-            f"\n📍 የመጨረሻ የተላከ ቦታ፦ {lat:.6f}, {lon:.6f}\n"
-            f"🕒 የቦታ ማሻሻያ፦ {record.get('location_updated_at') or 'N/A'}\n"
-            f"🗺️ በካርታ ላይ፦ {map_url}\n\n"
-            "⚠️ ይህ የመጨረሻ የተላከ ቦታ ነው፤ የመኪናው በአሁኑ ሰከንድ ያለበት ቦታ መሆኑ አይረጋገጥም።"
-        )
+        msg += f"\n📍 የመጨረሻ የተላከ ቦታ፦ {lat:.6f}, {lon:.6f}\n🗺️ [በካርታ ላይ ለማየት]({map_url})"
     else:
         msg += "\n📍 ሹፌሩ እስካሁን የGPS ቦታ አልላከም።"
+        
     await update.effective_message.reply_text(msg, disable_web_page_preview=True)
 
 async def tracking_text_handler(update, context):
