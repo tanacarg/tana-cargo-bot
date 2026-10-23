@@ -46,7 +46,6 @@ DB_PATH = "tana_cargo.db"
 # ==================================================
 
 def get_traccar_location(device_id: str):
-    """ከTraccar ሰርቨር የመጨረሻውን የመኪና ቦታ ያመጣል"""
     try:
         headers = {"Authorization": f"Bearer {TRACCAR_TOKEN}"}
         url_dev = f"{TRACCAR_URL}/api/devices?uniqueId={device_id}"
@@ -397,6 +396,7 @@ def db_finish_tracking(tracking_code):
         conn.commit()
     finally:
         conn.close()
+
 # ==================================================
 # MEMORY
 # ==================================================
@@ -432,7 +432,6 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
     BROKER_NAME, BROKER_PHONE, BROKER_ADDRESS,
 ) = range(22, 25)
 
-# 🔴 አዲስ ስቴቶች ለሹፌር እና ደንበኛ ክትትል ጥያቄ
 (
     TRACK_REQ_PHONE, TRACK_REQ_ROUTE, TRACK_REQ_LOCATION,
     CUST_TRACK_PHONE_ONLY
@@ -446,7 +445,7 @@ def main_menu(user_id=None):
     if user_id and is_admin(user_id):
         keyboard = [
             ["🚚 ጭነት መለጠፍ", "🔎 ጭነት መፈለግ"],
-            ["🚛 መኪና ማስመዝገብ", "🚛 መኪና መፈለግ"],
+            ["🚛 የጭነት መኪና ማስመዝገብ", "🚛 የጭነት መኪና መፈለግ"],
             ["👤 የኔ መረጃ"],
             ["📍 የጭነት ክትትል"],
             ["🤝 የግንኙነት ጥያቄዎች"],
@@ -457,7 +456,7 @@ def main_menu(user_id=None):
     else:
         keyboard = [
             ["🚚 ጭነት መለጠፍ", "🔎 ጭነት መፈለግ"],
-            ["🚛 መኪና ማስመዝገብ", "🚛 መኪና መፈለግ"],
+            ["🚛 የጭነት መኪና ማስመዝገብ", "🚛 የጭነት መኪና መፈለግ"],
             ["👤 የኔ መረጃ"],
             ["📍 የጭነት ክትትል"],
             ["📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ"],
@@ -505,7 +504,6 @@ def subscribe_keyboard():
             callback_data="subscribed_check"
         )],
     ])
-
 # ==================================================
 # HELPERS
 # ==================================================
@@ -645,43 +643,29 @@ def is_selected_by_other(item_type, item_index, requester_id):
     return False
 
 # ==================================================
-# SUBSCRIBE GATE
+# SUBSCRIBE GATE (BYPASSED)
 # ==================================================
 
 async def check_subscription(user_id, context):
-    try:
-        member = await context.bot.get_chat_member(
-            chat_id=f"@{CHANNEL_USERNAME}",
-            user_id=user_id
-        )
-        if member.status in ["member", "administrator", "creator"]:
-            return True
-        return False
-    except Exception as e:
-        print(f"SUBSCRIBE CHECK ERROR: {e}")
-        return True
+    # ማስገደጃው ተነስቷል - ሁልጊዜ True ይመልሳል
+    return True
 
 async def subscribed_check_callback(update, context):
     query = update.callback_query
     user_id = update.effective_user.id
+    
+    context.user_data["subscribed"] = True
+    await query.answer("✅ አመሰግናለሁ! Subscribe ማድረግዎን አረጋግጠናል።", show_alert=True)
+    try:
+        await query.edit_message_text("✅ **አመሰግናለሁ!**\n\nSubscribe ማድረግዎን አረጋግጠናል።\n\n👉 አሁን የፈለጉትን ምናሌ በመንካት ይቀጥሉ!")
+    except Exception:
+        pass
 
-    is_subscribed = await check_subscription(user_id, context)
-
-    if is_subscribed:
-        context.user_data["subscribed"] = True
-        await query.answer("✅ አመሰግናለሁ! Subscribe ማድረግዎን አረጋግጠናል።", show_alert=True)
-        try:
-            await query.edit_message_text("✅ **አመሰግናለሁ!**\n\nSubscribe ማድረግዎን አረጋግጠናል።\n\n👉 አሁን የፈለጉትን ምናሌ በመንካት ይቀጥሉ!")
-        except Exception:
-            pass
-
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="👇 አሁን የፈለጉትን ምናሌ ይንኩ፦",
-            reply_markup=main_menu(user_id)
-        )
-    else:
-        await query.answer("❌ እስካሁን @tanapage Subscribe አላደረጉም።\n\nእባክዎ በመጀመሪያ Subscribe ያድርጉ፣ ከዚያ ይህን ይጫኑ።", show_alert=True)
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="👇 አሁን የፈለጉትን ምናሌ ይንኩ፦",
+        reply_markup=main_menu(user_id)
+    )
 
 # ==================================================
 # CARGO POSTING
@@ -929,7 +913,8 @@ async def cargo_price(update, context):
         f"📅 ቀን (ET)፦ {cargo.get('date_et', 'N/A')}\n"
         f"📅 ቀን (GC)፦ {cargo.get('date_gc', 'N/A')}\n"
         f"💰 የመጫኛ ዋጋ፦ {price_display}\n\n"
-        "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።",
+        "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።\n\n"
+        "ውድ ደንበኛች የጭነተዎን መዳረሻ በgoogle map ለመከታተል የስልክዎን location & የኢንተርኔት ዳታዎን አብርተው ከታች👇 የጭነት ክትትል የምትለዋን ምናሌ ተጭነው የኔን ጭነት መከታተያ ኮድ ጠይቅ(ደንበኛ) የምትለውን ተጭነው መመሪያውን በመከተል ጭነተዎን በጎግል ማፕ ይከታተሉ። የበለጠ መረጃ ለማግኘት 👉@tanapage join ያድርጉ።",
         reply_markup=main_menu(update.effective_user.id)
     )
 
@@ -956,6 +941,7 @@ async def cargo_price(update, context):
                 pass
 
     return ConversationHandler.END
+
 # ==================================================
 # TRUCK REGISTRATION
 # ==================================================
@@ -967,7 +953,7 @@ async def truck_start(update, context):
     context.user_data.pop("connect_info", None)
     context.user_data["truck"] = {}
     await update.message.reply_text(
-        "🚛 መኪና ማስመዝገብ\n\n1️⃣ የመኪናውን አይነት ይጻፉ።\nምሳሌ፦ Isuzu / ካሶኒ / ኦባማ"
+        "🚛 የጭነት መኪና ማስመዝገብ\n\n1️⃣ የመኪናውን አይነት ይጻፉ።\nምሳሌ፦ Isuzu / ካሶኒ / ኦባማ"
     )
     return TRUCK_TYPE
 
@@ -1076,7 +1062,8 @@ async def truck_phone(update, context):
         f"🛣️ መንገድ፦ {route_display}\n"
         f"📍 አድራሻ፦ {truck['address']}\n"
         f"👨‍✈️ ሹፌር፦ {truck['driver']}\n\n"
-        "🔒 ታርጋና ስልክ ቁጥር ለሌሎች ተጠቃሚዎች አይታይም።",
+        "🔒 ታርጋና ስልክ ቁጥር ለሌሎች ተጠቃሚዎች አይታይም።\n\n"
+        "ውድ ደንበኛችን ጭነት የሚያስጭንዎት ደንበኛ ጋር ስምምነት ላይ ደርሰዉ ጭነት ጭነው ጉዞ ከመጀመርዎ በፊት ባለጭነቱ ጭነቱን መከታተል እንዲችል የስልክዎን location on አድርገው የኢንተርኔት ዳታ አብርተው የጭነት ክትትል የምትለዋን ምናሌ በመንካት አዲስ ጉዞ ክፈት ሹፌር የምትለዋን ነክተው ያስመዝግቡ። የጉዞ መዳረሻ ላይ ሲደርሱ location ያጥፉ እናመሰግናለን የሚል notfication ይጨመር። ለበለጠ መረጃ👉 @tanapage ነክተው join ያድርጉ።",
         reply_markup=main_menu(update.effective_user.id)
     )
 
@@ -1100,7 +1087,6 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
-
 # ==================================================
 # BROKER REGISTRATION
 # ==================================================
@@ -1687,6 +1673,14 @@ async def connect_type(update, context):
             "owner_2_notified": False,
             "created_at": datetime.now().isoformat(),
         }
+        
+        msg_text = (
+            "✅ **እናመሰግናለን!**\n\n"
+            "📌 ምዝገባዎን ጨርሰዋል።\n\n"
+            "⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
+            "ውድ ደንበኛችን ባለጭነት ጋር ተስማምተው ጭነተዎን ጭነው ጉዞ ከመጀመርዎ በፊት ባለጭነት እርሶ የጫኑለትን ጭነት መከታተል እንዲችል የስልክዎን location ና የኢንተርኔት ዳታ አብርተው የጭነት ክትትል የምትለዋን ምናሌ ተጭነው አዲስ ጉዞ ክፈት (ሹፌር) የምትለዋን ተጭነው መረጃ ያጋሩ ጉዞ ሲጨርሱ location off ያድርጉ። ለበለጠ መረጃ👉 @tanapage በመንካት join ያድርጉ።\n\n"
+            "🙏 እናመሰግናለን!"
+        )
     else:
         truck = truck_posts[info["item_index"]]
         request = {
@@ -1712,22 +1706,26 @@ async def connect_type(update, context):
             "owner_2_notified": False,
             "created_at": datetime.now().isoformat(),
         }
+        
+        msg_text = (
+            "✅ **እናመሰግናለን!**\n\n"
+            "📌 ምዝገባዎን ጨርሰዋል።\n\n"
+            "⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
+            "ውድ ደንበኛችን ጭነተዎን በgoogle map መከታተል ከፈለጉ የጭነት ክትትል የምትለዋን ምናሌ ተጭነው የኔን ጭነት መከታተል ኮድ ጠይቅ (ደንበኛ) የምትለዋን ተጭነው በመመሪያው መሰረት ይሙሉና ጭነተዎን ይከታተሉ። ለበለጠ መረጃ 👉@tanapage በመጫን join ያድርጉ።\n\n"
+            "🙏 እናመሰግናለን!"
+        )
 
     connection_requests.append(request)
     req_index = len(connection_requests) - 1
     context.user_data.pop("connect_info", None)
 
     await update.message.reply_text(
-        "✅ **እናመሰግናለን!**\n\n"
-        "📌 ምዝገባዎን ጨርሰዋል።\n\n"
-        "⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
-        "🙏 እናመሰግናለን!",
+        msg_text,
         reply_markup=main_menu(requester.id)
     )
 
     await send_admin_notification(context, req_index)
     return ConversationHandler.END
-
 # ==================================================
 # SEND ADMIN NOTIFICATION
 # ==================================================
@@ -1804,6 +1802,7 @@ async def send_admin_notification(context, req_index):
             await context.bot.send_message(chat_id=admin_id, text=notification_text)
         except Exception:
             pass
+
 # ==================================================
 # ADMIN RIGHT CONFIRM
 # ==================================================
@@ -2584,11 +2583,11 @@ async def admin_payment_action(update, context):
 async def tracking_menu(update, context):
     context.user_data.pop("tracking_update_code", None)
     context.user_data.pop("tracking_lookup_waiting", None)
+    
+    # 👉 1ኛ: የነበሩት ሁለት አማራጮች ተወግደዋል
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ አዲስ ጉዞ ክፍት (ሹፌር)", callback_data="tracking_driver_new")],
-        [InlineKeyboardButton("📦 የኔ ጭነት መከታተያ ኮድ ጠይቅ (ደንበኛ)", callback_data="tracking_customer_new")],
-        [InlineKeyboardButton("🚛 የመኪና ቦታ ላክ (የነበረ)", callback_data="tracking_driver")],
-        [InlineKeyboardButton("📦 ጭነቴን በኮድ መከታተል", callback_data="tracking_customer")],
+        [InlineKeyboardButton("📦 የኔን ጭነት መከታተያ ኮድ ጠይቅ (ደንበኛ)", callback_data="tracking_customer_new")],
     ])
     await update.effective_message.reply_text(
         "📍 **TANA CARGO — የጭነት ክትትል**\n\n"
@@ -2926,7 +2925,6 @@ async def admin_approve_stop(update, context):
         await query.edit_message_text("❌ ኮዱ አልተገኘም።")
         return
 
-    # አድሚን ለማየት የሚረዳ ሙሉ መረጃ
     info_text = (
         f"✅ **የክትትል ማቆሚያ ጥያቄ ጸድቋል!**\n\n"
         f"🔑 ኮድ: {code}\n"
@@ -3234,16 +3232,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"DB SAVE USER ERROR: {e}")
 
+    # 👉 7ኛ: የSubscription ማስገደጃው ተወግዶ በቀጥታ ወደ ምናሌ ይገባል
     await update.message.reply_text(
         "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
         "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
         "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📢 **ስለ ጣና ጭነት (Tana Cargo) መረጃ**\n"
-        "እንዲደርስዎ አክቲቭ የሆነችውን\n👉 **@tanapage** Subscribe ያድርጉ! 🔔\n\n"
-        "✅ Subscribe ካደረጉ በኋላ\nከታች ያለውን **✅ Subscribe አድርጌያለሁ** ይጫኑ።\n"
-        "━━━━━━━━━━━━━━━━━━━━",
-        reply_markup=subscribe_keyboard()
+        "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
+        reply_markup=main_menu(user.id)
     )
 
 async def profile(update, context):
@@ -3372,7 +3367,7 @@ async def clean_expired_posts(context):
 # ==================================================
 
 MASTER_MENU_REGEX = (
-    r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|"
+    r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 የጭነት መኪና ማስመዝገብ|🚛 የጭነት መኪና መፈለግ|"
     r"👤 የኔ መረጃ|📍 የጭነት ክትትል|🤝 የግንኙነት ጥያቄዎች|📋 የጭነት ደላሎች መዝገብ|"
     r"🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ|📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ|"
     r"💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"
@@ -3382,19 +3377,7 @@ async def menu_router(update, context):
     text = update.message.text
     uid = update.effective_user.id
 
-    is_subscribed = await check_subscription(uid, context)
-    if not is_subscribed:
-        await update.message.reply_text(
-            "🎉 **ውድ ደንበኛችን!**\n\nእኛን ስለመረጡን እናመሰግናለን! 🙏\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "📢 ስለ **ጣና ጭነት (Tana Cargo)**\nአጠቃላይ መመሪያዎችን ለማወቅ\nእና መረጃዎች እንዲደርሰዎት\n\n"
-            "👉 መጀመሪያ **@tanapage** ይግቡና\n**Subscribe** ያድርጉ! 🔔\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "✅ Subscribe ካደረጉ በኋላ\nከታች ያለውን **✅ Subscribe አድርጌያለሁ** ይጫኑ።\n\n🙏 አመሰግናለን!",
-            reply_markup=subscribe_keyboard()
-        )
-        return ConversationHandler.END
-
+    # 👉 7ኛ: የSubscription ቼክ ሙሉ በሙሉ ተወግዷል
     context.user_data["subscribed"] = True
     clear_stale_user_state(context)
 
@@ -3403,9 +3386,9 @@ async def menu_router(update, context):
     if text == "🔎 ጭነት መፈለግ":
         await find_cargo(update, context)
         return ConversationHandler.END
-    if text == "🚛 መኪና ማስመዝገብ":
+    if text == "🚛 የጭነት መኪና ማስመዝገብ":
         return await truck_start(update, context)
-    if text == "🚛 መኪና መፈለግ":
+    if text == "🚛 የጭነት መኪና መፈለግ":
         await find_truck(update, context)
         return ConversationHandler.END
     if text == "👤 የኔ መረጃ":
@@ -3446,9 +3429,9 @@ async def menu_interrupt(update, context):
     if text == "🔎 ጭነት መፈለግ":
         await find_cargo(update, context)
         return ConversationHandler.END
-    if text == "🚛 መኪና ማስመዝገብ":
+    if text == "🚛 የጭነት መኪና ማስመዝገብ":
         return await truck_start(update, context)
-    if text == "🚛 መኪና መፈለግ":
+    if text == "🚛 የጭነት መኪና መፈለግ":
         await find_truck(update, context)
         return ConversationHandler.END
     if text == "👤 የኔ መረጃ":
@@ -3488,7 +3471,6 @@ def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing.")
 
-    # 🔴 Render ፖርት ማረጋገጫውን በፍጥነት እንዲያገኝ ከሁሉም ነገር በፊት እንጀምረው
     start_health_server()
 
     try:
@@ -3518,8 +3500,8 @@ def main():
         entry_points=[
             MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
             MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚛 መኪና ማስመዝገብ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚛 መኪና መፈለግ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🚛 የጭነት መኪና ማስመዝገብ$"), menu_router),
+            MessageHandler(filters.Regex(r"^🚛 የጭነት መኪና መፈለግ$"), menu_router),
             MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), menu_router),
             MessageHandler(filters.Regex(r"^📍 የጭነት ክትትል$"), menu_router),
             MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), menu_router),
@@ -3669,12 +3651,10 @@ def main():
     application.add_handler(CallbackQueryHandler(tracking_customer_choose, pattern=r"^tracking_customer$"))
     application.add_handler(CallbackQueryHandler(tracking_begin_location, pattern=r"^tracking_update:[A-Z0-9]+$"))
     
-    # አዲስ የተጨመሩ ካልባክ ማዘዣዎች (ክትትል ማቆሚያ)
     application.add_handler(CallbackQueryHandler(request_stop_tracking, pattern=r"^stop_req:[A-Z0-9]+$"))
     application.add_handler(CallbackQueryHandler(admin_approve_stop, pattern=r"^stop_approve:[A-Z0-9]+$"))
     application.add_handler(CallbackQueryHandler(admin_reject_stop, pattern=r"^stop_reject:[A-Z0-9]+$"))
     
-    # Admin tracking approvals
     application.add_handler(CallbackQueryHandler(admin_approve_tracking, pattern=r"^adminapprovetrack_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_reject_tracking, pattern=r"^adminrejecttrack_\d+$"))
     
