@@ -408,8 +408,6 @@ brokers = []
 connection_requests = []
 pending_deletes = []
 pending_track_requests = []
-pending_cust_track_requests = []
-rent_requests = [] # 🔴 አዲስ ለኪራይ መኪና መከታተያ
 
 # ==================================================
 # STATES
@@ -434,11 +432,11 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
     BROKER_NAME, BROKER_PHONE, BROKER_ADDRESS,
 ) = range(22, 25)
 
+# 🔴 አዲስ ስቴቶች ለሹፌር እና ደንበኛ ክትትል ጥያቄ
 (
     TRACK_REQ_PHONE, TRACK_REQ_ROUTE, TRACK_REQ_LOCATION,
-    CUST_TRACK_PHONE_ONLY,
-    RENT_OWNER_NAME, RENT_PLATE, RENT_CUST_PHONE, RENT_DRIVER_NAME, RENT_DRIVER_PHONE
-) = range(25, 34)
+    CUST_TRACK_PHONE_ONLY
+) = range(25, 29)
 
 # ==================================================
 # MENUS
@@ -452,7 +450,6 @@ def main_menu(user_id=None):
             ["👤 የኔ መረጃ"],
             ["📍 የጭነት ክትትል"],
             ["🤝 የግንኙነት ጥያቄዎች"],
-            ["🚗 የኪራይ/የሹፌር መከታተያ"], # 🔴 Admin Menu
             ["📋 የጭነት ደላሎች መዝገብ"],
             ["💳 የአገልግሎት ክፍያ ለመፈፀም"],
             ["📞 Support", "ℹ️ About"],
@@ -463,7 +460,6 @@ def main_menu(user_id=None):
             ["🚛 መኪና ማስመዝገብ", "🚛 መኪና መፈለግ"],
             ["👤 የኔ መረጃ"],
             ["📍 የጭነት ክትትል"],
-            ["🚗 ያከራዩትን /ለሹፌር የሰጡትን መኪና ለመከታተል"], # 🔴 Customer Menu
             ["📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ"],
             ["🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ"],
             ["💳 የአገልግሎት ክፍያ ለመፈፀም"],
@@ -2582,201 +2578,7 @@ async def admin_payment_action(update, context):
             pass
 
 # ==================================================
-# RENT TRACKING (አዲስ የኪራይ መኪና መከታተያ)
-# ==================================================
-
-async def rent_tracking_start(update, context):
-    context.user_data["rent"] = {}
-    await update.message.reply_text(
-        "🚗 **ያከራዩትን / ለሹፌር የሰጡትን መኪና ለመከታተል**\n\n"
-        "1️⃣ እባክዎን **ሙሉ ስምዎን** ይጻፉ።"
-    )
-    return RENT_OWNER_NAME
-
-async def rent_owner_name(update, context):
-    context.user_data["rent"]["owner_name"] = update.message.text.strip()
-    await update.message.reply_text(
-        "2️⃣ የመኪናውን **ታርጋ ቁጥር** ይጻፉ።\nምሳሌ፦ 12345"
-    )
-    return RENT_PLATE
-
-async def rent_plate(update, context):
-    context.user_data["rent"]["plate"] = update.message.text.strip()
-    await update.message.reply_text(
-        "3️⃣ አሁን ቴሌግራም የሚጠቀሙበትን **የስልክ ቁጥር** ይጻፉ።\nምሳሌ፦ 0912345678"
-    )
-    return RENT_CUST_PHONE
-
-async def rent_cust_phone(update, context):
-    phone = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_phone(phone)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-        return RENT_CUST_PHONE
-    context.user_data["rent"]["cust_phone"] = phone
-    await update.message.reply_text(
-        "4️⃣ መኪናዎን የተከራየውን ወይም የሹፌርዎን **ስም** ይጻፉ።"
-    )
-    return RENT_DRIVER_NAME
-
-async def rent_driver_name(update, context):
-    context.user_data["rent"]["driver_name"] = update.message.text.strip()
-    await update.message.reply_text(
-        "5️⃣ የመኪናዎን የተከራየውን ወይም የሹፌርዎን **ስልክ ቁጥር** ይጻፉ።\nምሳሌ፦ 0912345678"
-    )
-    return RENT_DRIVER_PHONE
-
-async def rent_driver_phone(update, context):
-    phone = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_phone(phone)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-        return RENT_DRIVER_PHONE
-    
-    context.user_data["rent"]["driver_phone"] = phone
-    context.user_data["rent"]["customer_id"] = update.effective_user.id
-    context.user_data["rent"]["status"] = "pending"
-    
-    rent_requests.append(context.user_data["rent"])
-    req_idx = len(rent_requests) - 1
-    context.user_data.pop("rent", None)
-
-    await update.message.reply_text(
-        "✅ **እናመሰግናለን!**\n\n"
-        "የጣና ጭነት ባለቤት መኪናዎን live ማየት እንዲችሉ ኮድ ባስመዘገቡት ቴሌግራም አካውንት ይልክሎታል።",
-        reply_markup=main_menu(update.effective_user.id)
-    )
-
-    text = (
-        "🆕 **TANA CARGO — አዲስ የኪራይ መከታተያ ጥያቄ**\n\n"
-        f"👤 የባለቤቱ ስም: {context.user_data.get('rent', {}).get('owner_name') or rent_requests[req_idx]['owner_name']}\n"
-        f"🚗 የመኪና ታርጋ: {rent_requests[req_idx]['plate']}\n"
-        f"📞 የደንበኛው ስልክ: {rent_requests[req_idx]['cust_phone']}\n"
-        f"👤 የሹፌሩ ስም: {rent_requests[req_idx]['driver_name']}\n"
-        f"📞 የሹፌሩ ስልክ: {rent_requests[req_idx]['driver_phone']}\n\n"
-        "📌 ለመከታተል አረንጓዴውን 'ክትትል ጀምር' ይጫኑ።"
-    )
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🟢 ክትትል ጀምር", callback_data=f"rent_start_{req_idx}"),
-            InlineKeyboardButton("🔴 አቁም", callback_data=f"rent_stop_{req_idx}")
-        ],
-        [InlineKeyboardButton("❌ አጥፍ X", callback_data=f"rent_delete_{req_idx}")]
-    ])
-
-    for admin_id in get_admin_ids():
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=text, reply_markup=kb)
-        except Exception:
-            pass
-
-    return ConversationHandler.END
-
-async def admin_rent_action(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    parts = query.data.split("_")
-    action = parts[1]
-    idx = int(parts[2])
-
-    if idx < 0 or idx >= len(rent_requests):
-        return
-
-    req = rent_requests[idx]
-    if req.get("status") == "deleted":
-        await query.answer("⚠️ ይህ ተሰርዟል።", show_alert=True)
-        return
-
-    if action == "delete":
-        if not is_super_admin(update.effective_user.id):
-            await query.answer("❌ Super Admin ብቻ!", show_alert=True)
-            return
-        req["status"] = "deleted"
-        await query.edit_message_text("❌ **ተሰርዟል!**\n\nየደንበኛውም ሆነ የአድሚኑ ማሳወቂያ ጠፍቷል።")
-        try:
-            await context.bot.send_message(chat_id=req["customer_id"], text="❌ የኪራይ መከታተያ ጥያቄዎ ተሰርዟል።")
-        except Exception:
-            pass
-        return
-
-    if action == "start":
-        if req["status"] == "active":
-            await query.answer("⚠️ ቀድሞ ተጀምሯል!", show_alert=True)
-            return
-        req["status"] = "active"
-        req["tracking_code"] = "RENT" + secrets.token_hex(3).upper()
-        
-        await query.edit_message_text(
-            f"🟢 **ክትትል ተጀምሯል!**\n\n🔑 ኮድ: `{req['tracking_code']}`\n\n"
-            "ኮዱ ለደንበኛው ተልኳል።"
-        )
-        try:
-            await context.bot.send_message(
-                chat_id=req["customer_id"],
-                text=f"🎉 **መኪናዎን መከታተል ተጀምሯል!**\n\n"
-                     f"🔑 **የክትትል ኮድዎ፦** `{req['tracking_code']}`\n\n"
-                     f"📞 የሹፌሩ ስልክ: {req['driver_phone']}\n"
-                     f"🚗 ታርጋ: {req['plate']}\n\n"
-                     f"👉 ወደ '📍 የጭነት ክትትል' ሄደው '📦 ጭነቴን በኮድ መከታተል' ላይ ይህንን ኮድ በማስገባት በማንኛውም ሰዓት መኪናዎን መከታተል ይችላሉ።"
-            )
-        except Exception:
-            pass
-        return
-
-    if action == "stop":
-        if req["status"] != "active":
-            await query.answer("⚠️ ንቁ አይደለም!", show_alert=True)
-            return
-        req["status"] = "stopped"
-        await query.edit_message_text("🔴 **ክትትል ተቋርጧል!**\n\nየደንበኛው መከታተያ ተዘግቷል።")
-        try:
-            await context.bot.send_message(chat_id=req["customer_id"], text="🔴 የመኪናዎ ክትትል በአድሚን ተቋርጧል።")
-        except Exception:
-            pass
-        return
-
-async def show_rent_tracking_menu(update, context):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Admin ብቻ።")
-        return
-
-    active_reqs = [r for r in rent_requests if r.get("status") != "deleted"]
-    if not active_reqs:
-        await update.message.reply_text("🚗 እስካሁን የተመዘገበ የኪራይ ጥያቄ የለም።")
-        return
-
-    for i, req in enumerate(active_reqs):
-        # Find real index for callback
-        real_idx = rent_requests.index(req)
-        
-        text = (
-            f"🚗 **የኪራይ ጥያቄ #{i+1}**\n\n"
-            f"👤 የባለቤቱ ስም: {req['owner_name']}\n"
-            f"🚗 የመኪና ታርጋ: {req['plate']}\n"
-            f"📞 የደንበኛው ስልክ: {req['cust_phone']}\n"
-            f"👤 የሹፌሩ ስም: {req['driver_name']}\n"
-            f"📞 የሹፌሩ ስልክ: {req['driver_phone']}\n"
-            f"📌 ሁኔታ: {req['status']}\n"
-        )
-        if req.get("tracking_code"):
-            text += f"🔑 ኮድ: `{req['tracking_code']}`\n"
-
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🟢 ክትትል ጀምር", callback_data=f"rent_start_{real_idx}"),
-                InlineKeyboardButton("🔴 አቁም", callback_data=f"rent_stop_{real_idx}")
-            ],
-            [InlineKeyboardButton("❌ አጥፍ X", callback_data=f"rent_delete_{real_idx}")]
-        ])
-        
-        await update.message.reply_text(text, reply_markup=kb)
-# ==================================================
-# TRACKING HANDLERS (Driver & Customer)
+# TANA CARGO TRACKING (NEW FLOW)
 # ==================================================
 
 async def tracking_menu(update, context):
@@ -2796,6 +2598,7 @@ async def tracking_menu(update, context):
         reply_markup=keyboard
     )
 
+# --- የሹፌር አዲስ ጉዞ መክፈቻ ---
 async def tracking_new_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -2974,6 +2777,7 @@ async def admin_reject_tracking(update, context):
     except Exception:
         pass
 
+# --- 🔴 የደንበኛ አዲስ ኮድ መጠየቂያ (ስልክ ብቻ) ---
 async def customer_track_start(update, context):
     query = update.callback_query
     await query.answer()
@@ -3025,6 +2829,7 @@ async def cust_track_phone_only(update, context):
         )
     return ConversationHandler.END
 
+# --- ክትትል ማየት እና ማቆም ---
 async def tracking_customer_choose(update, context):
     query = update.callback_query
     await query.answer()
@@ -3121,6 +2926,7 @@ async def admin_approve_stop(update, context):
         await query.edit_message_text("❌ ኮዱ አልተገኘም።")
         return
 
+    # አድሚን ለማየት የሚረዳ ሙሉ መረጃ
     info_text = (
         f"✅ **የክትትል ማቆሚያ ጥያቄ ጸድቋል!**\n\n"
         f"🔑 ኮድ: {code}\n"
@@ -3343,17 +3149,20 @@ async def share_full_information(index, context):
             await context.bot.send_message(chat_id=uid, text=msg)
         except Exception:
             pass
-
 # ==================================================
-# TEXT ROUTER
+# STALE STATE CLEANER
 # ==================================================
 
 def clear_stale_user_state(context, keep=()):
     for key in ("cargo", "truck", "broker", "owner",
                 "connect_info", "sending_admin_message",
-                "tracking_update_code", "tracking_lookup_waiting", "track_new", "cust_track_phone_only", "rent"):
+                "tracking_update_code", "tracking_lookup_waiting", "track_new", "cust_track_phone_only"):
         if key not in keep:
             context.user_data.pop(key, None)
+
+# ==================================================
+# CONNECT FALLBACK ROUTER
+# ==================================================
 
 async def connect_fallback_router(update, context):
     info = context.user_data.get("connect_info")
@@ -3387,6 +3196,10 @@ async def connect_fallback_router(update, context):
     if not address:
         await connect_type(update, context)
         return
+
+# ==================================================
+# TEXT ROUTER
+# ==================================================
 
 async def text_router(update, context):
     if update.effective_user is None:
@@ -3560,9 +3373,7 @@ async def clean_expired_posts(context):
 
 MASTER_MENU_REGEX = (
     r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 መኪና ማስመዝገብ|🚛 መኪና መፈለግ|"
-    r"👤 የኔ መረጃ|📍 የጭነት ክትትል|🤝 የግንኙነት ጥያቄዎች|"
-    r"🚗 የኪራይ/የሹፌር መከታተያ|🚗 ያከራዩትን /ለሹፌር የሰጡትን መኪና ለመከታተል|" # 🔴 አዲስ
-    r"📋 የጭነት ደላሎች መዝገብ|"
+    r"👤 የኔ መረጃ|📍 የጭነት ክትትል|🤝 የግንኙነት ጥያቄዎች|📋 የጭነት ደላሎች መዝገብ|"
     r"🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ|📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ|"
     r"💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"
 )
@@ -3606,11 +3417,6 @@ async def menu_router(update, context):
     if text == "🤝 የግንኙነት ጥያቄዎች":
         await show_connection_requests(update, context)
         return ConversationHandler.END
-    if text == "🚗 የኪራይ/የሹፌር መከታተያ":
-        await show_rent_tracking_menu(update, context)
-        return ConversationHandler.END
-    if text == "🚗 ያከራዩትን /ለሹፌር የሰጡትን መኪና ለመከታተል":
-        return await rent_tracking_start(update, context)
     if text == "📋 የጭነት ደላሎች መዝገብ":
         await show_broker_registry(update, context)
         return ConversationHandler.END
@@ -3654,11 +3460,6 @@ async def menu_interrupt(update, context):
     if text == "🤝 የግንኙነት ጥያቄዎች":
         await show_connection_requests(update, context)
         return ConversationHandler.END
-    if text == "🚗 የኪራይ/የሹፌር መከታተያ":
-        await show_rent_tracking_menu(update, context)
-        return ConversationHandler.END
-    if text == "🚗 ያከራዩትን /ለሹፌር የሰጡትን መኪና ለመከታተል":
-        return await rent_tracking_start(update, context)
     if text == "📋 የጭነት ደላሎች መዝገብ":
         await show_broker_registry(update, context)
         return ConversationHandler.END
@@ -3687,6 +3488,7 @@ def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing.")
 
+    # 🔴 Render ፖርት ማረጋገጫውን በፍጥነት እንዲያገኝ ከሁሉም ነገር በፊት እንጀምረው
     start_health_server()
 
     try:
@@ -3721,8 +3523,6 @@ def main():
             MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), menu_router),
             MessageHandler(filters.Regex(r"^📍 የጭነት ክትትል$"), menu_router),
             MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚗 የኪራይ/የሹፌር መከታተያ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚗 ያከራዩትን /ለሹፌር የሰጡትን መኪና ለመከታተል$"), menu_router),
             MessageHandler(filters.Regex(r"^📋 የጭነት ደላሎች መዝገብ$"), menu_router),
             MessageHandler(filters.Regex(r"^🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ$"), menu_router),
             MessageHandler(filters.Regex(r"^📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ$"), menu_router),
@@ -3737,7 +3537,6 @@ def main():
             CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"),
             CallbackQueryHandler(tracking_new_start, pattern=r"^tracking_driver_new$"),
             CallbackQueryHandler(customer_track_start, pattern=r"^tracking_customer_new$"),
-            CommandHandler("renttrack", rent_tracking_start), # 🔴 አዲስ ትዕዛዝ
         ],
         states={
             CARGO_FROM: [
@@ -3858,26 +3657,6 @@ def main():
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cust_track_phone_only),
             ],
-            RENT_OWNER_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, rent_owner_name),
-            ],
-            RENT_PLATE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, rent_plate),
-            ],
-            RENT_CUST_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, rent_cust_phone),
-            ],
-            RENT_DRIVER_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, rent_driver_name),
-            ],
-            RENT_DRIVER_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, rent_driver_phone),
-            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
@@ -3899,9 +3678,6 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_approve_tracking, pattern=r"^adminapprovetrack_\d+$"))
     application.add_handler(CallbackQueryHandler(admin_reject_tracking, pattern=r"^adminrejecttrack_\d+$"))
     
-    # 🔴 አዲስ ለኪራይ መከታተያ (Rent Tracking)
-    application.add_handler(CallbackQueryHandler(admin_rent_action, pattern=r"^rent_(start|stop|delete)_\d+$"))
-
     application.add_handler(MessageHandler(filters.LOCATION, tracking_location_handler), group=1)
 
     # Connection callbacks
