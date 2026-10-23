@@ -437,6 +437,10 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
     CUST_TRACK_PHONE_ONLY
 ) = range(25, 29)
 
+# 🔴 አዲስ ስቴቶች ለቀላል የመኪና ምዝገባ እና ፍለጋ
+TRUCK_ALL_INFO = 29
+FIND_TRUCK_QUERY = 30
+
 # ==================================================
 # MENUS
 # ==================================================
@@ -647,7 +651,6 @@ def is_selected_by_other(item_type, item_index, requester_id):
 # ==================================================
 
 async def check_subscription(user_id, context):
-    # ማስገደጃው ተነስቷል - ሁልጊዜ True ይመልሳል
     return True
 
 async def subscribed_check_callback(update, context):
@@ -943,113 +946,85 @@ async def cargo_price(update, context):
     return ConversationHandler.END
 
 # ==================================================
-# TRUCK REGISTRATION
+# TRUCK REGISTRATION (SIMPLIFIED)
 # ==================================================
 
 async def truck_start(update, context):
-    context.user_data.pop("cargo", None)
-    context.user_data.pop("broker", None)
-    context.user_data.pop("owner", None)
-    context.user_data.pop("connect_info", None)
-    context.user_data["truck"] = {}
+    context.user_data.clear()
     await update.message.reply_text(
-        "🚛 የጭነት መኪና ማስመዝገብ\n\n1️⃣ የመኪናውን አይነት ይጻፉ።\nምሳሌ፦ Isuzu / ካሶኒ / ኦባማ"
+        "🚛 **የጭነት መኪና ማስመዝገብ (ቀላል መንገድ)**\n\n"
+        "እባክዎ የሚከተሉትን 6 መረጃዎች በቅደም ተከተል በአንድ መልዕክት ይላኩልን (እያንዳንዱን በአዲስ መስመር)፦\n\n"
+        "1️⃣ የመኪና አይነት (ምሳሌ፦ Isuzu)\n"
+        "2️⃣ ታርጋ ቁጥር (ቁጥር ብቻ - ምሳሌ፦ 12345)\n"
+        "3️⃣ የመጫን አቅም (ምሳሌ፦ 30 ቶን)\n"
+        "4️⃣ የሚሰሩበት መንገድ እና አድራሻ (ምሳሌ፦ ባህርዳር - አዲስ አበባ)\n"
+        "5️⃣ የሹፌር ስም (ምሳሌ፦ አበበ)\n"
+        "6️⃣ ስልክ ቁጥር (ምሳሌ፦ 0912345678)\n\n"
+        "👇 አሁን ይጻፉና ይላኩ።"
     )
-    return TRUCK_TYPE
+    return TRUCK_ALL_INFO
 
-async def truck_type(update, context):
-    context.user_data["truck"]["type"] = update.message.text.strip()
-    await update.message.reply_text("2️⃣ የመኪናውን ታርጋ ይጻፉ።\nቁጥር ብቻ መሆን አለበት።\nምሳሌ፦ 12345")
-    return TRUCK_PLATE
+async def truck_all_info(update, context):
+    text = update.message.text.strip()
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
 
-async def truck_plate(update, context):
-    plate = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_plate(plate)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 12345")
-        return TRUCK_PLATE
-    context.user_data["truck"]["plate"] = plate
-    await update.message.reply_text("3️⃣ የመጫን አቅምና የጭነት አይነት ይግለጹ።\nምሳሌ፦ 30 ቶን / 200 ኩንታል / 50 ቢያጆ")
-    return TRUCK_CAPACITY
+    if len(lines) < 6:
+        await update.message.reply_text("❌ እባክዎ ሁሉንም 6 መረጃዎች በቅደም ተከተል ይላኩ። (የጎደለ መረጃ አለ።)")
+        return TRUCK_ALL_INFO
 
-async def truck_capacity(update, context):
-    capacity = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_weight(capacity)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 30 ቶን / 200 ኩንታል / 50 ቢያጆ")
-        return TRUCK_CAPACITY
-    context.user_data["truck"]["capacity"] = capacity
-    await update.message.reply_text(
-        "4️⃣ የመንገድ ዝርዝር ይጻፉ።\n\nእባክዎ የሚጓዙበትን መንገድ ዓይነት ይምረጡ፦",
-        reply_markup=route_choice_keyboard()
-    )
-    return TRUCK_ROUTE
+    truck_type = lines[0]
+    plate = lines[1]
+    capacity = lines[2]
+    route_address = lines[3]
+    driver = lines[4]
+    phone = lines[5]
 
-async def truck_route_choice(update, context):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "route_anywhere":
-        context.user_data["truck"]["route"] = "በማንኛውም ቦታ"
-        context.user_data["truck"]["route_type"] = "anywhere"
-        await query.edit_message_text("✅ **በማንኛውም ቦታ** ተመርጧል።\n\n5️⃣ የመኪናውን አድራሻ ይጻፉ።")
-        return TRUCK_ADDRESS
-    elif query.data == "route_custom":
-        context.user_data["truck"]["route_type"] = "custom"
-        await query.edit_message_text("📍 **በርሶ ምርጫ** ተመርጧል።\n\nለምሳሌ፦ ጅማ → ባህርዳር → አዲስ አበባ")
-        return TRUCK_ROUTE
-    return TRUCK_ROUTE
+    is_valid_plate, plate_err = validate_plate(plate)
+    if not is_valid_plate:
+        await update.message.reply_text(f"❌ ታርጋ ስህተት፦ {plate_err}\nእባክዎ በድጋሚ ይላኩ። (ቁጥር ብቻ ይሁን)")
+        return TRUCK_ALL_INFO
 
-async def truck_route(update, context):
-    context.user_data["truck"]["route"] = update.message.text.strip()
-    await update.message.reply_text("5️⃣ የመኪናውን አድራሻ ይጻፉ።")
-    return TRUCK_ADDRESS
+    is_valid_cap, cap_err = validate_weight(capacity)
+    if not is_valid_cap:
+        await update.message.reply_text(f"❌ የመጫን አቅም ስህተት፦ {cap_err}\nእባክዎ በድጋሚ ይላኩ።")
+        return TRUCK_ALL_INFO
 
-async def truck_address(update, context):
-    context.user_data["truck"]["address"] = update.message.text.strip()
-    await update.message.reply_text("6️⃣ የሹፌሩን ስም ይጻፉ።")
-    return TRUCK_DRIVER
+    is_valid_phone, phone_err = validate_phone(phone)
+    if not is_valid_phone:
+        await update.message.reply_text(f"❌ ስልክ ስህተት፦ {phone_err}\nእባክዎ በድጋሚ ይላኩ።")
+        return TRUCK_ALL_INFO
 
-async def truck_driver(update, context):
-    context.user_data["truck"]["driver"] = update.message.text.strip()
-    await update.message.reply_text("7️⃣ የስልክ ቁጥር ይጻፉ።\nበ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\nምሳሌ፦ 0912345678")
-    return TRUCK_PHONE
-
-async def truck_phone(update, context):
-    phone = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_phone(phone)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-        return TRUCK_PHONE
-
-    truck = context.user_data["truck"]
-    truck["phone"] = phone
-    truck["user_id"] = update.effective_user.id
-    truck["active"] = True
-    truck["timestamp"] = datetime.now().isoformat()
-    truck["poster_type"] = "broker" if is_broker(update.effective_user.id) else "customer"
-
-    expiry_date = datetime.now() + timedelta(hours=CARGO_EXPIRY_HOURS)
-    truck["expiry_date"] = expiry_date.isoformat()
+    truck = {
+        "type": truck_type,
+        "plate": plate,
+        "capacity": capacity,
+        "route": route_address,
+        "address": route_address,
+        "driver": driver,
+        "phone": phone,
+        "user_id": update.effective_user.id,
+        "active": True,
+        "timestamp": datetime.now().isoformat(),
+        "poster_type": "broker" if is_broker(update.effective_user.id) else "customer",
+        "expiry_date": (datetime.now() + timedelta(hours=CARGO_EXPIRY_HOURS)).isoformat()
+    }
 
     if truck["poster_type"] == "broker":
-        if is_duplicate_broker_post(truck, is_truck=True,
-                                     broker_user_id=update.effective_user.id):
+        if is_duplicate_broker_post(truck, is_truck=True, broker_user_id=update.effective_user.id):
             await update.message.reply_text(
                 "❌ **ይቅርታ ይህንን መኪና ሌላ ደላላ (broker) አስመዝግቦታል።**\n\n"
-                "እባክዎ ሌላ የጭነት መኪና ካለዎት ያስመዝግቡ።"
+                "እባክዎ ሌላ የጭነት መኪና ካለዎት ያስመዝግቡ።",
+                reply_markup=main_menu(update.effective_user.id)
             )
-            return TRUCK_PHONE
+            return ConversationHandler.END
 
-    truck_posts.append(truck.copy())
+    truck_posts.append(truck)
     try:
         db_save_truck(truck)
     except Exception as e:
         print(f"DB SAVE TRUCK ERROR: {e}")
 
-    owner_name = users.get(update.effective_user.id, {}).get(
-        "name", update.effective_user.full_name
-    )
-    route_display = truck.get("route", "በማንኛውም ቦታ")
+    owner_name = users.get(update.effective_user.id, {}).get("name", update.effective_user.full_name)
     poster_label = get_poster_label(update.effective_user.id)
 
     await update.message.reply_text(
@@ -1059,8 +1034,7 @@ async def truck_phone(update, context):
         f"🚛 አይነት፦ {truck['type']}\n"
         f"🔢 ታርጋ፦ {truck['plate']}\n"
         f"⚖️ አቅም፦ {truck['capacity']}\n"
-        f"🛣️ መንገድ፦ {route_display}\n"
-        f"📍 አድራሻ፦ {truck['address']}\n"
+        f"🛣️ መንገድ/አድራሻ፦ {truck['route']}\n"
         f"👨‍✈️ ሹፌር፦ {truck['driver']}\n\n"
         "🔒 ታርጋና ስልክ ቁጥር ለሌሎች ተጠቃሚዎች አይታይም።\n\n"
         "ውድ ደንበኛችን ጭነት የሚያስጭንዎት ደንበኛ ጋር ስምምነት ላይ ደርሰዉ ጭነት ጭነው ጉዞ ከመጀመርዎ በፊት ባለጭነቱ ጭነቱን መከታተል እንዲችል የስልክዎን location on አድርገው የኢንተርኔት ዳታ አብርተው የጭነት ክትትል የምትለዋን ምናሌ በመንካት አዲስ ጉዞ ክፈት ሹፌር የምትለዋን ነክተው ያስመዝግቡ። የጉዞ መዳረሻ ላይ ሲደርሱ location ያጥፉ እናመሰግናለን የሚል notfication ይጨመር። ለበለጠ መረጃ👉 @tanapage ነክተው join ያድርጉ።",
@@ -1078,9 +1052,8 @@ async def truck_phone(update, context):
                         "🔔 ተስማሚ የጭነት መኪና ተገኝቷል!\n\n"
                         f"🚛 አይነት፦ {truck['type']}\n"
                         f"⚖️ አቅም፦ {truck['capacity']}\n"
-                        f"🛣️ መንገድ፦ {route_display}\n"
-                        f"📍 አድራሻ፦ {truck['address']}\n\n"
-                        "🚛 መኪና መፈለግን ይጫኑ።"
+                        f"🛣️ መንገድ፦ {truck['route']}\n\n"
+                        "🚛 የጭነት መኪና መፈለግን ይጫኑ።"
                     )
                 )
             except Exception:
@@ -1431,29 +1404,53 @@ async def find_cargo(update, context):
         await update.message.reply_text(msg, reply_markup=kb)
 
 # ==================================================
-# FIND TRUCK
+# FIND TRUCK (SIMPLIFIED)
 # ==================================================
 
 async def find_truck(update, context):
+    await update.message.reply_text(
+        "🔎 **የጭነት መኪና መፈለግ**\n\n"
+        "እባክዎ የሚፈልጉትን የመኪና አይነት ወይም የመንገድ አቅጣጫ ይጻፉ።\n"
+        "ለምሳሌ፦ Isuzu ወይም ባህር ዳር\n\n"
+        "👉 ሁሉንም መኪኖች ለማየት 'ሁሉም' ብለው ይጻፉ።",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return FIND_TRUCK_QUERY
+
+async def find_truck_query(update, context):
+    query = update.message.text.strip().lower()
     active_trucks = [t for t in truck_posts if t.get("active", True)]
-    is_admin_user = is_admin(update.effective_user.id)
+
+    if query != "ሁሉም":
+        filtered = []
+        for t in active_trucks:
+            route_text = t.get("route", "").lower()
+            address_text = t.get("address", "").lower()
+            if (query in t["type"].lower() or query in route_text or query in address_text):
+                filtered.append(t)
+        active_trucks = filtered
 
     if not active_trucks:
         await update.message.reply_text(
-            "🚛 በአሁኑ ጊዜ ተስማሚ የጭነት መኪና የለም።\n\n"
-            "🔎 መኪና እያፈላለግን ነው።\n"
-            "🔔 ተስማሚ መኪና ሲገኝ እናሳውቅዎታለን።",
+            f"🚛 '{query}' ጋር የሚዛመድ ንቁ የጭነት መኪና አልተገኘም።\n\n"
+            "እባክዎ ሌላ ቃል ይፈልጉ ወይም 'ሁሉም' ብለው ይጻፉ።",
             reply_markup=main_menu(update.effective_user.id)
         )
-        return
+        return ConversationHandler.END
 
-    for i, truck in enumerate(active_trucks):
+    await update.message.reply_text(
+        f"🔎 **የተገኙ የጭነት መኪናዎች (ጠቅላላ {len(active_trucks)})**",
+        reply_markup=main_menu(update.effective_user.id)
+    )
+
+    is_admin_user = is_admin(update.effective_user.id)
+    limit = 20 if is_admin_user else 10
+
+    for i, truck in enumerate(active_trucks[:limit]):
         truck_id = f"{i + 1:03d}"
         route_display = truck.get("route", "N/A")
-
         real_index = truck_posts.index(truck)
         is_selected = is_already_selected("truck", real_index)
-
         status_mark = "❌ " if is_selected else ""
 
         admin_info = ""
@@ -1476,28 +1473,23 @@ async def find_truck(update, context):
             f"{poster_label}\n"
             f"🔹 አይነት፦ {truck['type']}\n"
             f"⚖️ አቅም፦ {truck['capacity']}\n"
-            f"🛣️ መንገድ፦ {route_display}\n"
-            f"📍 አድራሻ፦ {truck['address']}\n"
+            f"🛣️ መንገድ/አድራሻ፦ {route_display}\n"
             f"{admin_info}"
             "━━━━━━━━━━━━━━━━━━━━"
         )
 
         if is_selected:
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    f"❌ መኪና {truck_id} ተመርጧል",
-                    callback_data="already_selected"
-                )
+                InlineKeyboardButton(f"❌ መኪና {truck_id} ተመርጧል", callback_data="already_selected")
             ]])
         else:
             kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    f"የመረጡት የጭነት መኪና {truck_id} ከሆነ ይጫኑ 👈",
-                    callback_data=f"truckconnect_{real_index}"
-                )
+                InlineKeyboardButton(f"የመረጡት የጭነት መኪና {truck_id} ከሆነ ይጫኑ 👈", callback_data=f"truckconnect_{real_index}")
             ]])
 
         await update.message.reply_text(msg, reply_markup=kb)
+
+    return ConversationHandler.END
 
 # ==================================================
 # ALREADY SELECTED CALLBACK
@@ -2584,7 +2576,6 @@ async def tracking_menu(update, context):
     context.user_data.pop("tracking_update_code", None)
     context.user_data.pop("tracking_lookup_waiting", None)
     
-    # 👉 1ኛ: የነበሩት ሁለት አማራጮች ተወግደዋል
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ አዲስ ጉዞ ክፍት (ሹፌር)", callback_data="tracking_driver_new")],
         [InlineKeyboardButton("📦 የኔን ጭነት መከታተያ ኮድ ጠይቅ (ደንበኛ)", callback_data="tracking_customer_new")],
@@ -2617,11 +2608,35 @@ async def tracking_req_phone(update, context):
         return TRACK_REQ_PHONE
     
     context.user_data["track_new"]["customer_phone"] = phone
-    await update.message.reply_text(
-        "2️⃣ **የመንገዱን ዝርዝር** ይጻፉ።\n"
-        "ምሳሌ፦ ባህር ዳር ➡️ አዲስ አበባ"
-    )
-    return TRACK_REQ_ROUTE
+    
+    found_route = None
+    for c in cargo_posts:
+        if c.get("phone") == phone and c.get("active"):
+            found_route = f"{c['from']} ➡️ {c['to']}"
+            break
+            
+    if found_route:
+        context.user_data["track_new"]["route"] = found_route
+        await update.message.reply_text(
+            f"✅ የደንበኛው ስልክ ቁጥር ተረጋግጧል!\n"
+            f"🗺️ የመንገዱ ዝርዝር: **{found_route}**\n\n"
+            "3️⃣ **የአሁኑን የመኪና ቦታ** ይላኩ።\n\n"
+            "ከታች ያለውን ቁልፍ ተጭነው GPS ይላኩ።",
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton("📍 የአሁኑን ቦታ ላክ", request_location=True)],
+                 [KeyboardButton("❌ ሰርዝ")]],
+                resize_keyboard=True, one_time_keyboard=True
+            )
+        )
+        return TRACK_REQ_LOCATION
+    else:
+        await update.message.reply_text(
+            "⚠️ በዚህ ስልክ ቁጥር የተመዘገበ ንቁ ጭነት አልተገኘም።\n"
+            "እባክዎ ስልክ ቁጥሩን ያረጋግጡ ወይም የመንገዱን ዝርዝር በእጅዎ ይጻፉ።\n\n"
+            "2️⃣ **የመንገዱን ዝርዝር** ይጻፉ።\n"
+            "ምሳሌ፦ ባህር ዳር ➡️ አዲስ አበባ"
+        )
+        return TRACK_REQ_ROUTE
 
 async def tracking_req_route(update, context):
     route = update.message.text.strip()
@@ -2803,8 +2818,7 @@ async def cust_track_phone_only(update, context):
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute("""
-            SELECT tracking_code, origin, destination, status 
-            FROM tracking_sessions 
+            SELECT * FROM tracking_sessions 
             WHERE customer_phone = ? AND status IN ('ready', 'in_transit')
             ORDER BY created_at DESC LIMIT 1
         """, (phone,)).fetchall()
@@ -2814,12 +2828,10 @@ async def cust_track_phone_only(update, context):
     if rows:
         record = dict(rows[0])
         await update.message.reply_text(
-            f"✅ **የክትትል ኮድዎ ተገኝቷል!**\n\n"
-            f"🔑 ኮድ፦ `{record['tracking_code']}`\n"
-            f"📍 መንገድ፦ {record['origin']} ➡️ {record['destination']}\n\n"
-            f"👉 ወደ '📍 የጭነት ክትትል' ሄደው '📦 ጭነቴን በኮድ መከታተል' ላይ ይህንን ኮድ ያስገቡ።",
-            reply_markup=main_menu(update.effective_user.id)
+            "✅ **የክትትል ኮድዎ ተገኝቷል! በራስ-ሰር ወደ ማፕ እየተዛወረ ነው...**",
+            reply_markup=ReplyKeyboardRemove()
         )
+        await tracking_show_result(update, context, record)
     else:
         await update.message.reply_text(
             "❌ በዚህ ስልክ ቁጥር የተመዘገበ ንቁ ጉዞ አልተገኘም።\n\n"
@@ -3232,7 +3244,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"DB SAVE USER ERROR: {e}")
 
-    # 👉 7ኛ: የSubscription ማስገደጃው ተወግዶ በቀጥታ ወደ ምናሌ ይገባል
     await update.message.reply_text(
         "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
         "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
@@ -3377,7 +3388,6 @@ async def menu_router(update, context):
     text = update.message.text
     uid = update.effective_user.id
 
-    # 👉 7ኛ: የSubscription ቼክ ሙሉ በሙሉ ተወግዷል
     context.user_data["subscribed"] = True
     clear_stale_user_state(context)
 
@@ -3389,8 +3399,7 @@ async def menu_router(update, context):
     if text == "🚛 የጭነት መኪና ማስመዝገብ":
         return await truck_start(update, context)
     if text == "🚛 የጭነት መኪና መፈለግ":
-        await find_truck(update, context)
-        return ConversationHandler.END
+        return await find_truck(update, context)
     if text == "👤 የኔ መረጃ":
         await profile(update, context)
         return ConversationHandler.END
@@ -3432,8 +3441,7 @@ async def menu_interrupt(update, context):
     if text == "🚛 የጭነት መኪና ማስመዝገብ":
         return await truck_start(update, context)
     if text == "🚛 የጭነት መኪና መፈለግ":
-        await find_truck(update, context)
-        return ConversationHandler.END
+        return await find_truck(update, context)
     if text == "👤 የኔ መረጃ":
         await profile(update, context)
         return ConversationHandler.END
@@ -3562,35 +3570,17 @@ def main():
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price),
             ],
-            TRUCK_TYPE: [
+            
+            # 🔴 አዲስ የተቀየሩት የመኪና ስቴቶች
+            TRUCK_ALL_INFO: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_type),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_all_info),
             ],
-            TRUCK_PLATE: [
+            FIND_TRUCK_QUERY: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_plate),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, find_truck_query),
             ],
-            TRUCK_CAPACITY: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_capacity),
-            ],
-            TRUCK_ROUTE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(truck_route_choice, pattern=r"^route_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_route),
-            ],
-            TRUCK_ADDRESS: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_address),
-            ],
-            TRUCK_DRIVER: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_driver),
-            ],
-            TRUCK_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_phone),
-            ],
+            
             OWNER_NAME: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name),
