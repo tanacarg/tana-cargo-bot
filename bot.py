@@ -432,14 +432,15 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
     BROKER_NAME, BROKER_PHONE, BROKER_ADDRESS,
 ) = range(22, 25)
 
-(
-    TRACK_REQ_PHONE, TRACK_REQ_ROUTE, TRACK_REQ_LOCATION,
-    CUST_TRACK_PHONE_ONLY
-) = range(25, 29)
-
 # 🔴 አዲስ ስቴቶች ለቀላል የመኪና ምዝገባ እና ፍለጋ
 TRUCK_ALL_INFO = 29
 FIND_TRUCK_QUERY = 30
+
+# 🔴 አዲስ የክትትል ስቴቶች
+(
+    TRACK_SEND_NAME, TRACK_SEND_PHONE, TRACK_SEND_LOCATION,
+    STOP_TRACK_NAME, STOP_TRACK_PHONE, STOP_TRACK_CONFIRM
+) = range(31, 37)
 
 # ==================================================
 # MENUS
@@ -2573,506 +2574,245 @@ async def admin_payment_action(update, context):
 # ==================================================
 
 async def tracking_menu(update, context):
-    context.user_data.pop("tracking_update_code", None)
-    context.user_data.pop("tracking_lookup_waiting", None)
+    context.user_data.pop("track_send", None)
+    context.user_data.pop("stop_track", None)
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ አዲስ ጉዞ ክፍት (ሹፌር)", callback_data="tracking_driver_new")],
-        [InlineKeyboardButton("📦 የኔን ጭነት መከታተያ ኮድ ጠይቅ (ደንበኛ)", callback_data="tracking_customer_new")],
+        [InlineKeyboardButton("➕ አድራሻ መላክ (ሹፌር)", callback_data="tracking_send_loc")],
+        [InlineKeyboardButton("📦 የመጨረሻ አድራሻዬን ተመልከት (ደንበኛ)", callback_data="tracking_get_loc")],
+        [InlineKeyboardButton("🛑 ክትትል ማስቆም (ሹፌር)", callback_data="tracking_stop")],
     ])
     await update.effective_message.reply_text(
         "📍 **TANA CARGO — የጭነት ክትትል**\n\n"
-        "🚛 ሹፌር፦ አዲስ ጉዞ ከፍተው ቦታ ይላኩ።\n"
-        "📦 ደንበኛ፦ አዲስ ኮድ ይጠይቁ ወይም ያለዎትን ኮድ ያስገቡ።\n\n"
-        "⚠️ አዲስ ጉዞ ሲከፈት አድሚን አጽድቆ ኮዱ ለባለጭነቱ ይላካል።",
+        "🚛 ሹፌር፦ አዲስ አድራሻ መላክ ወይም ክትትል ማስቆም ይችላሉ።\n"
+        "📦 ደንበኛ፦ የመጨረሻ አድራሻዎን ይመልከቱ።",
         reply_markup=keyboard
     )
 
-# --- የሹፌር አዲስ ጉዞ መክፈቻ ---
-async def tracking_new_start(update, context):
+async def tracking_send_start(update, context):
     query = update.callback_query
     await query.answer()
-    context.user_data["track_new"] = {}
-    await query.message.reply_text(
-        "📝 **አዲስ ጉዞ መክፈት**\n\n"
-        "1️⃣ የባለጭነቱን (Customer) **ስልክ ቁጥር** ያስገቡ።\n"
-        "ምሳሌ፦ 0912345678"
-    )
-    return TRACK_REQ_PHONE
+    context.user_data["track_send"] = {}
+    await query.message.reply_text("1️⃣ አድራሻ መላክ የፈለጉለትን ሰው **ሙሉ ስም** ይጻፉ።")
+    return TRACK_SEND_NAME
 
-async def tracking_req_phone(update, context):
+async def tracking_send_name(update, context):
+    context.user_data["track_send"]["name"] = update.message.text.strip()
+    await update.message.reply_text("2️⃣ የሰውየውን **ቴሌግራም የሚጠቀሙበትን ስልክ ቁጥር** ያስገቡ።\nምሳሌ፦ 0912345678")
+    return TRACK_SEND_PHONE
+
+async def tracking_send_phone(update, context):
     phone = update.message.text.strip().split("\n")[0].strip()
     is_valid, error = validate_phone(phone)
     if not is_valid:
         await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-        return TRACK_REQ_PHONE
-    
-    context.user_data["track_new"]["customer_phone"] = phone
-    
-    found_route = None
-    for c in cargo_posts:
-        if c.get("phone") == phone and c.get("active"):
-            found_route = f"{c['from']} ➡️ {c['to']}"
-            break
-            
-    if found_route:
-        context.user_data["track_new"]["route"] = found_route
-        await update.message.reply_text(
-            f"✅ የደንበኛው ስልክ ቁጥር ተረጋግጧል!\n"
-            f"🗺️ የመንገዱ ዝርዝር: **{found_route}**\n\n"
-            "3️⃣ **የአሁኑን የመኪና ቦታ** ይላኩ።\n\n"
-            "ከታች ያለውን ቁልፍ ተጭነው GPS ይላኩ።",
-            reply_markup=ReplyKeyboardMarkup(
-                [[KeyboardButton("📍 የአሁኑን ቦታ ላክ", request_location=True)],
-                 [KeyboardButton("❌ ሰርዝ")]],
-                resize_keyboard=True, one_time_keyboard=True
-            )
-        )
-        return TRACK_REQ_LOCATION
-    else:
-        await update.message.reply_text(
-            "⚠️ በዚህ ስልክ ቁጥር የተመዘገበ ንቁ ጭነት አልተገኘም።\n"
-            "እባክዎ ስልክ ቁጥሩን ያረጋግጡ ወይም የመንገዱን ዝርዝር በእጅዎ ይጻፉ።\n\n"
-            "2️⃣ **የመንገዱን ዝርዝር** ይጻፉ።\n"
-            "ምሳሌ፦ ባህር ዳር ➡️ አዲስ አበባ"
-        )
-        return TRACK_REQ_ROUTE
-
-async def tracking_req_route(update, context):
-    route = update.message.text.strip()
-    context.user_data["track_new"]["route"] = route
+        return TRACK_SEND_PHONE
+    context.user_data["track_send"]["phone"] = phone
     await update.message.reply_text(
-        "3️⃣ **የአሁኑን የመኪና ቦታ** ይላኩ።\n\n"
-        "ከታች ያለውን ቁልፍ ተጭነው GPS ይላኩ።",
+        "3️⃣ **የአሁኑን ቦታዎን** ይላኩ።\n\nከታች ያለውን ቁልፍ ተጭነው GPS ይላኩ።",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("📍 የአሁኑን ቦታ ላክ", request_location=True)],
              [KeyboardButton("❌ ሰርዝ")]],
             resize_keyboard=True, one_time_keyboard=True
         )
     )
-    return TRACK_REQ_LOCATION
+    return TRACK_SEND_LOCATION
 
-async def tracking_req_location(update, context):
+async def tracking_send_location(update, context):
     if not update.message.location:
         await update.message.reply_text("❌ እባክዎ ቦታውን በGPS ይላኩ።", reply_markup=ReplyKeyboardRemove())
-        return TRACK_REQ_LOCATION
+        return TRACK_SEND_LOCATION
 
     loc = update.message.location
-    req = context.user_data.get("track_new", {})
-    req["driver_id"] = update.effective_user.id
-    req["driver_name"] = update.effective_user.full_name
-    req["lat"] = loc.latitude
-    req["lon"] = loc.longitude
+    req = context.user_data.get("track_send", {})
+    customer_name = req.get("name")
+    customer_phone = req.get("phone")
+    driver_id = update.effective_user.id
+    driver_name = update.effective_user.full_name
     
-    pending_track_requests.append(req)
-    req_idx = len(pending_track_requests) - 1
-
-    await update.message.reply_text(
-        "✅ ቦታው ተቀብለናል። አድሚን ሲያጸድቅ ኮዱ ይላክልዎታል።",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    context.user_data.pop("track_new", None)
-
     map_url = f"https://maps.google.com/?q={loc.latitude},{loc.longitude}"
-    text = (
-        "🆕 **TANA CARGO — አዲስ የክትትል ጥያቄ (ሹፌር)**\n\n"
-        f"👤 ሹፌር: {req['driver_name']} (ID: {req['driver_id']})\n"
-        f"📞 የባለጭነቱ ስልክ: {req['customer_phone']}\n"
-        f"🛣️ መንገድ: {req['route']}\n\n"
-        f"🗺️ [የመኪናውን ቦታ ለማየት]({map_url})\n\n"
-        "📌 አጽድቀው ኮዱ ለባለጭነቱ እንዲላክ ይፈልጋሉ?"
-    )
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Approve & Send Code", callback_data=f"adminapprovetrack_{req_idx}"),
-        InlineKeyboardButton("❌ Reject", callback_data=f"adminrejecttrack_{req_idx}")
-    ]])
-
-    for admin_id in get_admin_ids():
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=text, reply_markup=kb, disable_web_page_preview=True)
-        except Exception:
-            pass
-
-    return ConversationHandler.END
-
-async def admin_approve_tracking(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    try:
-        idx = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-
-    if idx < 0 or idx >= len(pending_track_requests):
-        return
-
-    req = pending_track_requests[idx]
-    code = "TC" + secrets.token_hex(4).upper()
     
+    customer_user_id = None
+    for uid, udata in users.items():
+        if udata.get("phone") == customer_phone or udata.get("owner", {}).get("phone") == customer_phone:
+            customer_user_id = uid
+            break
+            
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
         cursor = conn.cursor()
+        code = "TC" + secrets.token_hex(4).upper()
         cursor.execute("""
             INSERT INTO tracking_sessions (
                 tracking_code, request_type, driver_user_id, customer_user_id,
                 origin, destination, cargo_description, truck_description,
                 status, latitude, longitude, location_updated_at, created_at,
-                customer_phone, driver_phone
-            ) VALUES (?, 'cargo', ?, 0, ?, ?, '', '', 'in_transit', ?, ?, ?, ?, ?, ?)
+                customer_name, customer_phone
+            ) VALUES (?, 'cargo', ?, ?, '', '', '', '', 'in_transit', ?, ?, ?, ?, ?, ?)
         """, (
-            code, req["driver_id"], req["route"], req["route"],
-            req["lat"], req["lon"], datetime.now().astimezone().isoformat(),
-            datetime.now().astimezone().isoformat(),
-            req["customer_phone"], ""
+            code, driver_id, customer_user_id or 0,
+            loc.latitude, loc.longitude, datetime.now().astimezone().isoformat(),
+            datetime.now().astimezone().isoformat(), customer_name, customer_phone
         ))
         conn.commit()
     finally:
         conn.close()
 
-    await query.edit_message_text(
-        f"✅ ጥያቄው ጸድቋል!\n\n🔑 ኮድ፦ `{code}`\n\n"
-        "ኮዱ ለሹፌሩም ለባለጭነቱም ተልኳል።"
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=req["driver_id"],
-            text=f"🎉 ጉዞዎ ጸድቋል!\n\n🔑 **የክትትል ኮድ፦** `{code}`\n\n"
-                 f"📞 ይህንን ኮድ ለባለጭነቱ ({req['customer_phone']}) ያስተላልፉ።\n"
-                 f"ደንበኛው ኮዱን በቦት ውስጥ ሲያስገባ የመኪናውን ቦታ ማየት ይችላል።"
-        )
-    except Exception:
-        pass
-
-    customer_id = None
-    for uid, udata in users.items():
-        if udata.get("phone") == req["customer_phone"] or udata.get("owner", {}).get("phone") == req["customer_phone"]:
-            customer_id = uid
-            break
-            
-    if customer_id:
+    if customer_user_id:
         try:
             await context.bot.send_message(
-                chat_id=customer_id,
-                text=f"📦 **TANA CARGO — የጭነት ክትትል**\n\n"
-                     f"ሹፌሩ ጉዞ ጀምሯል! የክትትል ኮድዎ ይህ ነው፦\n\n"
-                     f"🔑 `{code}`\n\n"
-                     f"👉 ወደ '📍 የጭነት ክትትል' ሄደው '📦 ጭነቴን በኮድ መከታተል' ላይ ይህንን ኮድ ያስገቡ።"
+                chat_id=customer_user_id,
+                text=f"📍 **TANA CARGO — አዲስ አድራሻ**\n\n"
+                     f"ሹፌሩ ({driver_name}) የመኪናውን ቦታ ልኮልዎታል።\n\n"
+                     f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n"
+                     f"💡 አድራሻውን በቦቱ ውስጥ ለማየት '📍 የጭነት ክትትል' -> '📦 የመጨረሻ አድራሻዬን ተመልከት' የሚለውን ይጫኑ።"
             )
+            success_msg = f"✅ አድራሻው በቴሌግራም አካውንቱ ለ **{customer_name}** ({customer_phone}) ተልኳል።\n\n⚠️ እባክዎ የላኩለት ሰው on line ካልሆነ ደውለው ይንገሩት።"
         except Exception:
-            pass
+            success_msg = f"⚠️ ለ **{customer_name}** ({customer_phone}) መልዕክት መላክ አልተቻለም። እባክዎ ደውለው ያሳውቁት።"
+    else:
+        success_msg = (
+            f"✅ አድራሻው ተመዝግቧል!\n\n"
+            f"⚠️ ግን የላኩለት ሰው ({customer_name} - {customer_phone}) በቦቱ ላይ አልተመዘገበም።\n"
+            f"እባክዎ ደውለው ይንገሩት ወይም ይህንን ሊንክ ይላኩለት፦\n{map_url}"
+        )
 
-async def admin_reject_tracking(update, context):
+    await update.message.reply_text(success_msg, reply_markup=ReplyKeyboardRemove())
+    context.user_data.pop("track_send", None)
+    return ConversationHandler.END
+
+async def tracking_get_loc_callback(update, context):
     query = update.callback_query
     await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    try:
-        idx = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-
-    if idx < 0 or idx >= len(pending_track_requests):
-        return
-
-    req = pending_track_requests[idx]
-    await query.edit_message_text("❌ ጥያቄው ውድቅ ተደርጓል።")
-    
-    try:
-        await context.bot.send_message(chat_id=req["driver_id"], text="❌ የጉዞ ጥያቄዎ በአድሚን ውድቅ ተደርጓል።")
-    except Exception:
-        pass
-
-# --- 🔴 የደንበኛ አዲስ ኮድ መጠየቂያ (ስልክ ብቻ) ---
-async def customer_track_start(update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["cust_track_phone_only"] = True
-    await query.message.reply_text(
-        "📦 **የክትትል ኮድ ለማግኘት**\n\n"
-        "እባክዎን ሹፌሩ ያስመዘገበውን **የራስዎን ስልክ ቁጥር** ያስገቡ።\n"
-        "ምሳሌ፦ 0912345678\n\n"
-        "⚠️ ስልክ ቁጥሩ በሹፌሩ ጉዞ መክፈቻ ላይ የተመዘገበ መሆን አለበት።",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return CUST_TRACK_PHONE_ONLY
-
-async def cust_track_phone_only(update, context):
-    phone = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_phone(phone)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-        return CUST_TRACK_PHONE_ONLY
-    
-    context.user_data.pop("cust_track_phone_only", None)
+    customer_id = update.effective_user.id
     
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute("""
+        row = conn.execute("""
             SELECT * FROM tracking_sessions 
-            WHERE customer_phone = ? AND status IN ('ready', 'in_transit')
+            WHERE customer_user_id = ? AND status = 'in_transit'
             ORDER BY created_at DESC LIMIT 1
-        """, (phone,)).fetchall()
+        """, (customer_id,)).fetchone()
     finally:
         conn.close()
 
-    if rows:
-        record = dict(rows[0])
-        await update.message.reply_text(
-            "✅ **የክትትል ኮድዎ ተገኝቷል! በራስ-ሰር ወደ ማፕ እየተዛወረ ነው...**",
-            reply_markup=ReplyKeyboardRemove()
+    if row:
+        record = dict(row)
+        lat = record["latitude"]
+        lon = record["longitude"]
+        map_url = f"https://maps.google.com/?q={lat},{lon}"
+        msg = (
+            f"📦 **TANA CARGO — የመጨረሻ አድራሻ**\n\n"
+            f"👤 ሹፌር፦ {record.get('driver_description') or 'N/A'}\n"
+            f"🕒 የተላከበት ሰዓት፦ {record.get('location_updated_at')[:16]}\n\n"
+            f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})"
         )
-        await tracking_show_result(update, context, record)
+        await query.message.reply_text(msg, disable_web_page_preview=True)
     else:
-        await update.message.reply_text(
-            "❌ በዚህ ስልክ ቁጥር የተመዘገበ ንቁ ጉዞ አልተገኘም።\n\n"
-            "እባክዎ ስልክ ቁጥሩን ያረጋግጡ ወይም ሹፌሩ ቁጥርዎን መዝግቦ መሆኑን ያረጋግጡ።",
-            reply_markup=main_menu(update.effective_user.id)
+        await query.message.reply_text(
+            "❌ ይቅርታ! ምንም አይነት የGoogle Map መረጃ አልተላከልዎትም።\n\n"
+            "እባክዎ አድራሻ እንዲልክልዎ የፈለጉትን ሰው ደውለው 'አድራሻህን ላክልኝ' ይበሉት።"
         )
-    return ConversationHandler.END
 
-# --- ክትትል ማየት እና ማቆም ---
-async def tracking_customer_choose(update, context):
+async def tracking_stop_start(update, context):
     query = update.callback_query
     await query.answer()
-    context.user_data["tracking_lookup_waiting"] = True
-    await query.message.reply_text(
-        "📦 የተሰጠዎትን የክትትል ኮድ ያስገቡ።\nምሳሌ፦ TC1A2B3C4"
-    )
+    context.user_data["stop_track"] = {}
+    await query.message.reply_text("1️⃣ ክትትል ማስቆም የፈለጉለትን ሰው **ሙሉ ስም** ይጻፉ።")
+    return STOP_TRACK_NAME
 
-async def tracking_driver_choose(update, context):
-    query = update.callback_query
-    await query.answer()
-    jobs = db_get_driver_tracking(query.from_user.id)
-    if not jobs:
-        await query.message.reply_text("🚛 ለእርስዎ የተመዘገበ ንቁ የክትትል ጉዞ አልተገኘም።\n\nአዲስ ጉዞ ለመክፈት '➕ አዲስ ጉዞ ክፍት' የሚለውን ይጫኑ።")
-        return
+async def tracking_stop_name(update, context):
+    context.user_data["stop_track"]["name"] = update.message.text.strip()
+    await update.message.reply_text("2️⃣ የሰውየውን **ስልክ ቁጥር** ያስገቡ።\nምሳሌ፦ 0912345678")
+    return STOP_TRACK_PHONE
+
+async def tracking_stop_phone(update, context):
+    phone = update.message.text.strip().split("\n")[0].strip()
+    is_valid, error = validate_phone(phone)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
+        return STOP_TRACK_PHONE
+    context.user_data["stop_track"]["phone"] = phone
     
-    buttons = []
-    for job in jobs[:20]:
-        route = f"{job.get('origin') or 'መነሻ አልተገለጸም'} ➡️ {job.get('destination') or 'መድረሻ አልተገለጸም'}"
-        label = f"📍 {job['tracking_code']} — {route}"
-        buttons.append([InlineKeyboardButton(label[:60], callback_data=f"tracking_update:{job['tracking_code']}")])
-        buttons.append([InlineKeyboardButton(f"🛑 {job['tracking_code']} — ክትትል አቁም", callback_data=f"stop_req:{job['tracking_code']}")])
-        
-    await query.message.reply_text("ቦታ ለመላክ የጉዞውን ኮድ ይምረጡ፦", reply_markup=InlineKeyboardMarkup(buttons))
-
-async def tracking_begin_location(update, context):
-    query = update.callback_query
-    await query.answer()
-    code = query.data.split(":", 1)[1].upper()
-    record = db_get_tracking(code)
-    if not record or int(record["driver_user_id"]) != query.from_user.id:
-        await query.message.reply_text("❌ ይህን ጉዞ የማዘመን ፈቃድ የለዎትም።")
-        return
-    if record["status"] == "delivered":
-        await query.message.reply_text("✅ ይህ ጉዞ እንደተጠናቀቀ ተመዝግቧል።")
-        return
-    context.user_data["tracking_update_code"] = code
-    await query.message.reply_text(
-        f"📍 ለጉዞ **{code}** የአሁኑን የመኪና ቦታ ይላኩ።\n\nከታች ያለውን ቁልፍ ይጫኑ።",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("📍 የአሁኑን ቦታ ላክ", request_location=True)],
-             [KeyboardButton("❌ ክትትሉን ሰርዝ")]],
-            resize_keyboard=True, one_time_keyboard=True
-        )
-    )
-
-async def request_stop_tracking(update, context):
-    query = update.callback_query
-    await query.answer()
-    code = query.data.split(":")[1].upper()
-    record = db_get_tracking(code)
-    
-    if not record:
-        await query.message.reply_text("❌ ኮዱ አልተገኘም።")
-        return
-        
-    user_id = update.effective_user.id
-    if int(record["driver_user_id"]) != user_id and int(record["customer_user_id"]) != user_id and not is_admin(user_id):
-        await query.message.reply_text("❌ ይህን ክትትል ማቆም አይችሉም።")
-        return
-
-    text = (
-        "🛑 **የክትትል ማቆሚያ ጥያቄ**\n\n"
-        f"🔑 ኮድ: {code}\n"
-        f"👤 የጠየቀው: {update.effective_user.full_name}\n"
-        f"🆔 ID: {user_id}\n\n"
-        "ይህንን ክትትል ማቆም ይፈቀድ?"
-    )
+    name = context.user_data["stop_track"]["name"]
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ ፍቀድ (Stop)", callback_data=f"stop_approve:{code}"),
-        InlineKeyboardButton("❌ ውድቅ አድርግ", callback_data=f"stop_reject:{code}")
+        InlineKeyboardButton("✅ Right (አረጋግጥ)", callback_data="stop_track_confirm")
     ]])
+    await update.message.reply_text(
+        f"📝 **ማረጋገጫ**\n\n"
+        f"👤 ስም፦ {name}\n"
+        f"📞 ስልክ፦ {phone}\n\n"
+        f"ክትትል ማቆምዎን ለማረጋገጥ ✅ Right ይጫኑ።",
+        reply_markup=kb
+    )
+    return STOP_TRACK_CONFIRM
 
-    for admin_id in get_admin_ids():
+async def tracking_stop_confirm(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    req = context.user_data.get("stop_track", {})
+    name = req.get("name")
+    phone = req.get("phone")
+    driver_id = update.effective_user.id
+    
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT customer_user_id FROM tracking_sessions 
+            WHERE driver_user_id = ? AND customer_phone = ? AND status = 'in_transit'
+            ORDER BY created_at DESC LIMIT 1
+        """, (driver_id, phone))
+        row = cursor.fetchone()
+        
+        if not row:
+            await query.edit_message_text("❌ በዚህ ስልክ ቁጥር ላይ ንቁ የክትትል ጉዞ አልተገኘም።")
+            return
+            
+        customer_user_id = row[0]
+        
+        cursor.execute("""
+            UPDATE tracking_sessions 
+            SET status = 'delivered', completed_at = ?
+            WHERE driver_user_id = ? AND customer_phone = ? AND status = 'in_transit'
+        """, (datetime.now().astimezone().isoformat(), driver_id, phone))
+        conn.commit()
+    finally:
+        conn.close()
+
+    await query.edit_message_text(
+        f"✅ **ክትትል በማቋረጥ ተጠናቋል!**\n\n"
+        f"ለ **{name}** ({phone}) የነበረው ክትትል ተዘግቷል።"
+    )
+
+    if customer_user_id and customer_user_id != 0:
         try:
-            await context.bot.send_message(chat_id=admin_id, text=text, reply_markup=kb)
+            await context.bot.send_message(
+                chat_id=customer_user_id,
+                text=f"🛑 **TANA CARGO**\n\nሹፌሩ ({name}) የጭነቱን ክትትል አቁሟል።\nጉዞዎ በደህና ይጠናቀቅ!"
+            )
         except Exception:
             pass
 
-    await query.message.reply_text("✅ የማቆሚያ ጥያቄዎ ለአድሚን ተልኳል። ሲፈቀድ ይነገርዎታል።")
-
-async def admin_approve_stop(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    code = query.data.split(":")[1]
-    record = db_get_tracking(code)
-    
-    if not record:
-        await query.edit_message_text("❌ ኮዱ አልተገኘም።")
-        return
-
-    info_text = (
-        f"✅ **የክትትል ማቆሚያ ጥያቄ ጸድቋል!**\n\n"
-        f"🔑 ኮድ: {code}\n"
-        f"👤 የባለጭነቱ ስም: {record.get('customer_name') or 'አልተመዘገበም'}\n"
-        f"📞 የባለጭነቱ ስልክ: {record.get('customer_phone') or 'አልተመዘገበም'}\n"
-        f"🏁 መዳረሻ: {record.get('destination') or 'አልተመዘገበም'}\n"
-        f"👨‍✈️ የሹፌሩ ስም: {record.get('driver_description') or 'አልተመዘገበም'}\n"
-        f"📞 የሹፌሩ ስልክ: {record.get('driver_phone') or 'አልተመዘገበም'}\n\n"
-        "ክትትሉ ተዘግቷል።"
-    )
-    
-    db_finish_tracking(code)
-    await query.edit_message_text(info_text)
-
-    for uid in [int(record['driver_user_id']), int(record['customer_user_id'])]:
-        if uid != 0:
-            try:
-                await context.bot.send_message(chat_id=uid, text=f"🛑 የክትትል ኮድ {code} በአድሚን ተዘግቷል። ከዚህ በኋላ ቦታ አይቀበልም።")
-            except Exception:
-                pass
-
-async def admin_reject_stop(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    code = query.data.split(":")[1]
-    await query.edit_message_text("❌ የማቆሚያ ጥያቄው ውድቅ ተደርጓል።")
-
-    record = db_get_tracking(code)
-    if record:
-        for uid in [int(record['driver_user_id']), int(record['customer_user_id'])]:
-            if uid != 0:
-                try:
-                    await context.bot.send_message(chat_id=uid, text=f"❌ የክትትል ኮድ {code} የማቆሚያ ጥያቄ በአድሚን ውድቅ ተደርጓል።")
-                except Exception:
-                    pass
-
-async def tracking_location_handler(update, context):
-    code = context.user_data.get("tracking_update_code")
-    if not code or not update.effective_user or not update.message or not update.message.location:
-        return
-    record = db_get_tracking(code)
-    if not record or int(record["driver_user_id"]) != update.effective_user.id:
-        context.user_data.pop("tracking_update_code", None)
-        await update.message.reply_text("❌ የክትትል ፈቃዱ አልተረጋገጠም።")
-        return
-    if record["status"] == "delivered":
-        context.user_data.pop("tracking_update_code", None)
-        await update.message.reply_text("✅ ጉዞው ተዘግቷል።", reply_markup=ReplyKeyboardRemove())
-        return
-    loc = update.message.location
-    db_update_tracking_location(code, loc.latitude, loc.longitude)
-    context.user_data.pop("tracking_update_code", None)
-    await update.message.reply_text(
-        f"✅ የጉዞ {code} ቦታ ተመዝግቧል።\n\n📍 ኬክሮስ፦ {loc.latitude:.6f}\n📍 ኬንትሮስ፦ {loc.longitude:.6f}\nደንበኛው ይህን ቦታ በክትትል ኮዱ ማየት ይችላል።",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-async def tracking_show_result(update, context, record):
-    code = record["tracking_code"]
-    status_labels = {"ready": "ጉዞ ለመጀመር ዝግጁ", "in_transit": "በመንገድ ላይ", "delivered": "ጉዞው ተጠናቋል"}
-    msg = (
-        f"📦 **TANA CARGO — የቀጥታ ክትትል**\n\n"
-        f"🔑 ኮድ፦ `{code}`\n"
-        f"📍 መነሻ/መረጃ፦ {record.get('origin') or 'አልተገለጸም'}\n"
-        f"🏁 መድረሻ/መንገድ፦ {record.get('destination') or 'አልተገለጸም'}\n"
-        f"📊 ሁኔታ፦ {status_labels.get(record.get('status'), record.get('status'))}\n"
-    )
-    
-    loc = get_traccar_location(TRACCAR_DEVICE_ID)
-    
-    if loc and loc.get("latitude"):
-        lat = float(loc["latitude"])
-        lon = float(loc["longitude"])
-        map_url = f"https://maps.google.com/?q={lat},{lon}"
-        msg += (
-            f"\n📍 **የመጨረሻ ቦታ፦** {loc.get('address')}\n"
-            f"🕒 **የተላከበት ሰዓት፦** {loc.get('timestamp')}\n"
-            f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n"
-            "⚠️ ይህ የመጨረሻ የተላከ ቦታ ነው።"
-        )
-    elif record.get("latitude") is not None:
-        lat = float(record["latitude"])
-        lon = float(record["longitude"])
-        map_url = f"https://maps.google.com/?q={lat},{lon}"
-        msg += f"\n📍 የመጨረሻ የተላከ ቦታ፦ {lat:.6f}, {lon:.6f}\n🗺️ [በካርታ ላይ ለማየት]({map_url})"
-    else:
-        msg += "\n📍 ሹፌሩ እስካሁን የGPS ቦታ አልላከም።"
-        
-    kb = None
-    if record.get('status') != 'delivered':
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🛑 ክትትል አቁም (Stop Request)", callback_data=f"stop_req:{code}")
-        ]])
-
-    await update.effective_message.reply_text(msg, disable_web_page_preview=True, reply_markup=kb)
+    context.user_data.pop("stop_track", None)
+    return ConversationHandler.END
 
 async def tracking_text_handler(update, context):
     if not update.effective_user or not update.message or not update.message.text:
         return
     text = update.message.text.strip()
     
-    if context.user_data.get("tracking_update_code") and text == "❌ ክትትሉን ሰርዝ":
-        context.user_data.pop("tracking_update_code", None)
-        await update.message.reply_text("ክትትሉ ተሰርዟል።", reply_markup=ReplyKeyboardRemove())
-        return
-
-    if context.user_data.get("track_new") and text == "❌ ሰርዝ":
-        context.user_data.pop("track_new", None)
-        await update.message.reply_text("ጉዞ መክፈቱ ተሰርዟል።", reply_markup=ReplyKeyboardRemove())
-        return
-        
-    if not context.user_data.get("tracking_lookup_waiting"):
-        return
-
-    if text == "❌ ክትትሉን ሰርዝ":
-        context.user_data.pop("tracking_lookup_waiting", None)
-        await update.message.reply_text("የክትትል ፍለጋው ተሰርዟል።", reply_markup=ReplyKeyboardRemove())
-        return
-
-    code = "".join(text.upper().split())
-    if len(code) < 6 or len(code) > 20:
-        await update.message.reply_text("❌ የክትትል ኮዱ ትክክል አይመስልም።")
-        return
-    
-    record = db_get_tracking(code)
-    if not record:
-        await update.message.reply_text("❌ ይህ የክትትል ኮድ አልተገኘም።")
-        return
-        
-    context.user_data.pop("tracking_lookup_waiting", None)
-    await tracking_show_result(update, context, record)
+    if text == "❌ ሰርዝ":
+        if context.user_data.get("track_send"):
+            context.user_data.pop("track_send", None)
+            await update.message.reply_text("ሂደቱ ተሰርዟል።", reply_markup=ReplyKeyboardRemove())
+            return
+        if context.user_data.get("stop_track"):
+            context.user_data.pop("stop_track", None)
+            await update.message.reply_text("ሂደቱ ተሰርዟል።", reply_markup=ReplyKeyboardRemove())
+            return
 
 # ==================================================
 # SHARE FULL INFORMATION
@@ -3166,7 +2906,7 @@ async def share_full_information(index, context):
 def clear_stale_user_state(context, keep=()):
     for key in ("cargo", "truck", "broker", "owner",
                 "connect_info", "sending_admin_message",
-                "tracking_update_code", "tracking_lookup_waiting", "track_new", "cust_track_phone_only"):
+                "track_send", "stop_track"):
         if key not in keep:
             context.user_data.pop(key, None)
 
@@ -3218,9 +2958,6 @@ async def text_router(update, context):
 
     if context.user_data.get("sending_admin_message"):
         return await handle_user_message(update, context)
-
-    if context.user_data.get("tracking_lookup_waiting") or context.user_data.get("tracking_update_code") or context.user_data.get("track_new"):
-        return await tracking_text_handler(update, context)
 
     if context.user_data.get("connect_info"):
         return await connect_fallback_router(update, context)
@@ -3525,8 +3262,8 @@ def main():
             CommandHandler("truck", truck_start),
             CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"),
             CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"),
-            CallbackQueryHandler(tracking_new_start, pattern=r"^tracking_driver_new$"),
-            CallbackQueryHandler(customer_track_start, pattern=r"^tracking_customer_new$"),
+            CallbackQueryHandler(tracking_send_start, pattern=r"^tracking_send_loc$"),
+            CallbackQueryHandler(tracking_stop_start, pattern=r"^tracking_stop$"),
         ],
         states={
             CARGO_FROM: [
@@ -3571,7 +3308,6 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price),
             ],
             
-            # 🔴 አዲስ የተቀየሩት የመኪና ስቴቶች
             TRUCK_ALL_INFO: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, truck_all_info),
@@ -3613,21 +3349,33 @@ def main():
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, connect_type),
             ],
-            TRACK_REQ_PHONE: [
+            
+            # 🔴 አዲስ የክትትል ስቴቶች
+            TRACK_SEND_NAME: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_req_phone),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_send_name),
             ],
-            TRACK_REQ_ROUTE: [
+            TRACK_SEND_PHONE: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_req_route),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_send_phone),
             ],
-            TRACK_REQ_LOCATION: [
-                MessageHandler(filters.LOCATION, tracking_req_location),
+            TRACK_SEND_LOCATION: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.LOCATION, tracking_send_location),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_text_handler),
             ],
-            CUST_TRACK_PHONE_ONLY: [
+            STOP_TRACK_NAME: [
                 MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cust_track_phone_only),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_stop_name),
+            ],
+            STOP_TRACK_PHONE: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_stop_phone),
+            ],
+            STOP_TRACK_CONFIRM: [
+                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
+                CallbackQueryHandler(tracking_stop_confirm, pattern=r"^stop_track_confirm$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_text_handler),
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
