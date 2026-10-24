@@ -1,2 +1,1 @@
-python-telegram-bot[job-queue]>=20.0,<23.0
-requests
+python-3.11.9
