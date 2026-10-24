@@ -42,7 +42,7 @@ MESSAGE_AUTO_DELETE_SECONDS = 1800
 DB_PATH = "tana_cargo.db"
 
 # ==================================================
-# TRACCAR API FUNCTION
+# TRACCAR API FUNCTION (LIVE)
 # ==================================================
 
 def get_traccar_location(device_id: str):
@@ -351,38 +351,6 @@ def db_get_tracking(tracking_code):
     finally:
         conn.close()
 
-def db_get_driver_tracking(driver_user_id):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute("""
-            SELECT tracking_code, origin, destination, cargo_description, status,
-                   location_updated_at
-            FROM tracking_sessions
-            WHERE driver_user_id = ? AND status IN ('ready', 'in_transit')
-            ORDER BY created_at DESC
-        """, (int(driver_user_id),)).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
-
-def db_update_tracking_location(tracking_code, latitude, longitude):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        conn.execute("""
-            UPDATE tracking_sessions
-            SET latitude = ?, longitude = ?, status = 'in_transit',
-                location_updated_at = ?
-            WHERE tracking_code = ?
-        """, (
-            float(latitude), float(longitude),
-            datetime.now().astimezone().isoformat(timespec="seconds"),
-            tracking_code.upper().strip()
-        ))
-        conn.commit()
-    finally:
-        conn.close()
-
 def db_finish_tracking(tracking_code):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
@@ -407,7 +375,6 @@ truck_posts = []
 brokers = []
 connection_requests = []
 pending_deletes = []
-pending_track_requests = []
 
 # ==================================================
 # STATES
@@ -432,11 +399,9 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
     BROKER_NAME, BROKER_PHONE, BROKER_ADDRESS,
 ) = range(22, 25)
 
-# 🔴 አዲስ ስቴቶች ለቀላል የመኪና ምዝገባ እና ፍለጋ
 TRUCK_ALL_INFO = 29
 FIND_TRUCK_QUERY = 30
 
-# 🔴 አዲስ የክትትል ስቴቶች
 (
     TRACK_SEND_NAME, TRACK_SEND_PHONE, TRACK_SEND_LOCATION,
     STOP_TRACK_NAME, STOP_TRACK_PHONE, STOP_TRACK_CONFIRM
@@ -496,18 +461,6 @@ def route_choice_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🌍 በማንኛውም ቦታ", callback_data="route_anywhere")],
         [InlineKeyboardButton("📍 በርሶ ምርጫ", callback_data="route_custom")],
-    ])
-
-def subscribe_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "📢 TANA CARGO ቻናል ተቀላቀል",
-            url=f"https://t.me/{CHANNEL_USERNAME}"
-        )],
-        [InlineKeyboardButton(
-            "✅ Subscribe አድርጌያለሁ",
-            callback_data="subscribed_check"
-        )],
     ])
 # ==================================================
 # HELPERS
@@ -594,10 +547,6 @@ def get_admin_ids():
         ids.append(int(ADMIN_USER_ID))
     return ids
 
-def schedule_delete(chat_id, message_id):
-    delete_at = datetime.now() + timedelta(seconds=MESSAGE_AUTO_DELETE_SECONDS)
-    pending_deletes.append((chat_id, message_id, delete_at))
-
 async def auto_delete_messages(context):
     now = datetime.now()
     remaining = []
@@ -648,38 +597,11 @@ def is_selected_by_other(item_type, item_index, requester_id):
     return False
 
 # ==================================================
-# SUBSCRIBE GATE (BYPASSED)
-# ==================================================
-
-async def check_subscription(user_id, context):
-    return True
-
-async def subscribed_check_callback(update, context):
-    query = update.callback_query
-    user_id = update.effective_user.id
-    
-    context.user_data["subscribed"] = True
-    await query.answer("✅ አመሰግናለሁ! Subscribe ማድረግዎን አረጋግጠናል።", show_alert=True)
-    try:
-        await query.edit_message_text("✅ **አመሰግናለሁ!**\n\nSubscribe ማድረግዎን አረጋግጠናል።\n\n👉 አሁን የፈለጉትን ምናሌ በመንካት ይቀጥሉ!")
-    except Exception:
-        pass
-
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="👇 አሁን የፈለጉትን ምናሌ ይንኩ፦",
-        reply_markup=main_menu(user_id)
-    )
-
-# ==================================================
 # CARGO POSTING
 # ==================================================
 
 async def cargo_start(update, context):
-    context.user_data.pop("truck", None)
-    context.user_data.pop("broker", None)
-    context.user_data.pop("owner", None)
-    context.user_data.pop("connect_info", None)
+    context.user_data.clear()
     context.user_data["cargo"] = {}
     await update.message.reply_text(
         "🚚 ጭነት መለጠፍ\n\n1️⃣ ጭነቱ የሚነሳበትን ቦታ ይጻፉ።\nምሳሌ፦ ባህር ዳር"
@@ -885,8 +807,7 @@ async def cargo_price(update, context):
     cargo["poster_type"] = "broker" if is_broker(update.effective_user.id) else "customer"
 
     if cargo["poster_type"] == "broker":
-        if is_duplicate_broker_post(cargo, is_truck=False,
-                                     broker_user_id=update.effective_user.id):
+        if is_duplicate_broker_post(cargo, is_truck=False, broker_user_id=update.effective_user.id):
             await update.message.reply_text(
                 "❌ **ይቅርታ ይህንን ጭነት ሌላ ደላላ (broker) ለጥፎታል።**\n\n"
                 "እባክዎ ሌላ ጭነት ካለዎት ይለጥፉ።"
@@ -899,23 +820,16 @@ async def cargo_price(update, context):
     except Exception as e:
         print(f"DB SAVE CARGO ERROR: {e}")
 
-    owner_name = users.get(update.effective_user.id, {}).get(
-        "name", update.effective_user.full_name
-    )
+    owner_name = users.get(update.effective_user.id, {}).get("name", update.effective_user.full_name)
     poster_label = get_poster_label(update.effective_user.id)
 
     await update.message.reply_text(
         "✅ ጭነትዎ በትክክል ተመዝግቧል!\n\n"
-        f"👤 የጭነት ባለቤት፦ {owner_name}\n"
-        f"{poster_label}\n"
-        f"📍 መነሻ፦ {cargo['from']}\n"
-        f"📍 መድረሻ፦ {cargo['to']}\n"
-        f"📦 አይነት፦ {cargo['type']}\n"
-        f"🚛 የሚፈለገው መኪና፦ {cargo['vehicle']}\n"
-        f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n"
-        f"⚖️ ክብደት፦ {cargo['weight']}\n"
-        f"📅 ቀን (ET)፦ {cargo.get('date_et', 'N/A')}\n"
-        f"📅 ቀን (GC)፦ {cargo.get('date_gc', 'N/A')}\n"
+        f"👤 የጭነት ባለቤት፦ {owner_name}\n{poster_label}\n"
+        f"📍 መነሻ፦ {cargo['from']}\n📍 መድረሻ፦ {cargo['to']}\n"
+        f"📦 አይነት፦ {cargo['type']}\n🚛 የሚፈለገው መኪና፦ {cargo['vehicle']}\n"
+        f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n⚖️ ክብደት፦ {cargo['weight']}\n"
+        f"📅 ቀን (ET)፦ {cargo.get('date_et', 'N/A')}\n📅 ቀን (GC)፦ {cargo.get('date_gc', 'N/A')}\n"
         f"💰 የመጫኛ ዋጋ፦ {price_display}\n\n"
         "🔒 የስልክ ቁጥርዎ ለሌሎች ተጠቃሚዎች አይታይም።\n\n"
         "ውድ ደንበኛች የጭነተዎን መዳረሻ በgoogle map ለመከታተል የስልክዎን location & የኢንተርኔት ዳታዎን አብርተው ከታች👇 የጭነት ክትትል የምትለዋን ምናሌ ተጭነው የኔን ጭነት መከታተያ ኮድ ጠይቅ(ደንበኛ) የምትለውን ተጭነው መመሪያውን በመከተል ጭነተዎን በጎግል ማፕ ይከታተሉ። የበለጠ መረጃ ለማግኘት 👉@tanapage join ያድርጉ።",
@@ -923,26 +837,17 @@ async def cargo_price(update, context):
     )
 
     for truck in truck_posts:
-        if not truck.get("active", True):
-            continue
+        if not truck.get("active", True): continue
         if vehicle_match(truck.get("type"), cargo.get("vehicle")):
             try:
                 await context.bot.send_message(
                     chat_id=truck["user_id"],
-                    text=(
-                        "🔔 ተስማሚ አዲስ ጭነት ተገኝቷል!\n\n"
-                        f"📍 {cargo['from']} ➡️ {cargo['to']}\n"
-                        f"📦 {cargo['type']}\n"
-                        f"🚛 የሚፈለገው፦ {cargo['vehicle']}\n"
-                        f"📊 {cargo['size_name']}\n"
-                        f"⚖️ {cargo['weight']}\n"
-                        f"📅 {cargo.get('date_et', 'N/A')} (ET)\n"
-                        f"💰 {price_display}\n\n"
-                        "🔎 ለማየት የጭነት መፈለግን ይጫኑ።"
-                    )
+                    text=(f"🔔 ተስማሚ አዲስ ጭነት ተገኝቷል!\n\n📍 {cargo['from']} ➡️ {cargo['to']}\n"
+                          f"📦 {cargo['type']}\n🚛 የሚፈለገው፦ {cargo['vehicle']}\n📊 {cargo['size_name']}\n"
+                          f"⚖️ {cargo['weight']}\n📅 {cargo.get('date_et', 'N/A')} (ET)\n💰 {price_display}\n\n"
+                          "🔎 ለማየት የጭነት መፈለግን ይጫኑ።")
                 )
-            except Exception:
-                pass
+            except Exception: pass
 
     return ConversationHandler.END
 
@@ -970,19 +875,14 @@ async def truck_all_info(update, context):
     lines = [line.strip() for line in text.split("\n") if line.strip()]
 
     if len(lines) < 6:
-        await update.message.reply_text("❌ እባክዎ ሁሉንም 6 መረጃዎች በቅደም ተከተል ይላኩ። (የጎደለ መረጃ አለ።)")
+        await update.message.reply_text("❌ እባክዎ ሁሉንም 6 መረጃዎች በቅደም ተከተል ይላኩ።")
         return TRUCK_ALL_INFO
 
-    truck_type = lines[0]
-    plate = lines[1]
-    capacity = lines[2]
-    route_address = lines[3]
-    driver = lines[4]
-    phone = lines[5]
+    truck_type, plate, capacity, route_address, driver, phone = lines[:6]
 
     is_valid_plate, plate_err = validate_plate(plate)
     if not is_valid_plate:
-        await update.message.reply_text(f"❌ ታርጋ ስህተት፦ {plate_err}\nእባክዎ በድጋሚ ይላኩ። (ቁጥር ብቻ ይሁን)")
+        await update.message.reply_text(f"❌ ታርጋ ስህተት፦ {plate_err}\nእባክዎ በድጋሚ ይላኩ።")
         return TRUCK_ALL_INFO
 
     is_valid_cap, cap_err = validate_weight(capacity)
@@ -996,15 +896,10 @@ async def truck_all_info(update, context):
         return TRUCK_ALL_INFO
 
     truck = {
-        "type": truck_type,
-        "plate": plate,
-        "capacity": capacity,
-        "route": route_address,
-        "address": route_address,
-        "driver": driver,
-        "phone": phone,
-        "user_id": update.effective_user.id,
-        "active": True,
+        "type": truck_type, "plate": plate, "capacity": capacity,
+        "route": route_address, "address": route_address,
+        "driver": driver, "phone": phone,
+        "user_id": update.effective_user.id, "active": True,
         "timestamp": datetime.now().isoformat(),
         "poster_type": "broker" if is_broker(update.effective_user.id) else "customer",
         "expiry_date": (datetime.now() + timedelta(hours=CARGO_EXPIRY_HOURS)).isoformat()
@@ -1012,53 +907,37 @@ async def truck_all_info(update, context):
 
     if truck["poster_type"] == "broker":
         if is_duplicate_broker_post(truck, is_truck=True, broker_user_id=update.effective_user.id):
-            await update.message.reply_text(
-                "❌ **ይቅርታ ይህንን መኪና ሌላ ደላላ (broker) አስመዝግቦታል።**\n\n"
-                "እባክዎ ሌላ የጭነት መኪና ካለዎት ያስመዝግቡ።",
-                reply_markup=main_menu(update.effective_user.id)
-            )
+            await update.message.reply_text("❌ **ይቅርታ ይህንን መኪና ሌላ ደላላ አስመዝግቦታል።**", reply_markup=main_menu(update.effective_user.id))
             return ConversationHandler.END
 
     truck_posts.append(truck)
-    try:
-        db_save_truck(truck)
-    except Exception as e:
-        print(f"DB SAVE TRUCK ERROR: {e}")
+    try: db_save_truck(truck)
+    except Exception as e: print(f"DB SAVE TRUCK ERROR: {e}")
 
     owner_name = users.get(update.effective_user.id, {}).get("name", update.effective_user.full_name)
     poster_label = get_poster_label(update.effective_user.id)
 
     await update.message.reply_text(
         "✅ መኪናዎ በትክክል ተመዝግቧል!\n\n"
-        f"👤 የመኪና ባለቤት፦ {owner_name}\n"
-        f"{poster_label}\n"
-        f"🚛 አይነት፦ {truck['type']}\n"
-        f"🔢 ታርጋ፦ {truck['plate']}\n"
-        f"⚖️ አቅም፦ {truck['capacity']}\n"
-        f"🛣️ መንገድ/አድራሻ፦ {truck['route']}\n"
-        f"👨‍✈️ ሹፌር፦ {truck['driver']}\n\n"
+        f"👤 የመኪና ባለቤት፦ {owner_name}\n{poster_label}\n"
+        f"🚛 አይነት፦ {truck['type']}\n🔢 ታርጋ፦ {truck['plate']}\n"
+        f"⚖️ አቅም፦ {truck['capacity']}\n🛣️ መንገድ/አድራሻ፦ {truck['route']}\n👨‍✈️ ሹፌር፦ {truck['driver']}\n\n"
         "🔒 ታርጋና ስልክ ቁጥር ለሌሎች ተጠቃሚዎች አይታይም።\n\n"
         "ውድ ደንበኛችን ጭነት የሚያስጭንዎት ደንበኛ ጋር ስምምነት ላይ ደርሰዉ ጭነት ጭነው ጉዞ ከመጀመርዎ በፊት ባለጭነቱ ጭነቱን መከታተል እንዲችል የስልክዎን location on አድርገው የኢንተርኔት ዳታ አብርተው የጭነት ክትትል የምትለዋን ምናሌ በመንካት አዲስ ጉዞ ክፈት ሹፌር የምትለዋን ነክተው ያስመዝግቡ። የጉዞ መዳረሻ ላይ ሲደርሱ location ያጥፉ እናመሰግናለን የሚል notfication ይጨመር። ለበለጠ መረጃ👉 @tanapage ነክተው join ያድርጉ።",
         reply_markup=main_menu(update.effective_user.id)
     )
 
     for cargo in cargo_posts:
-        if not cargo.get("active", True):
-            continue
+        if not cargo.get("active", True): continue
         if vehicle_match(truck.get("type"), cargo.get("vehicle")):
             try:
                 await context.bot.send_message(
                     chat_id=cargo["user_id"],
-                    text=(
-                        "🔔 ተስማሚ የጭነት መኪና ተገኝቷል!\n\n"
-                        f"🚛 አይነት፦ {truck['type']}\n"
-                        f"⚖️ አቅም፦ {truck['capacity']}\n"
-                        f"🛣️ መንገድ፦ {truck['route']}\n\n"
-                        "🚛 የጭነት መኪና መፈለግን ይጫኑ።"
-                    )
+                    text=(f"🔔 ተስማሚ የጭነት መኪና ተገኝቷል!\n\n🚛 አይነት፦ {truck['type']}\n"
+                          f"⚖️ አቅም፦ {truck['capacity']}\n🛣️ መንገድ፦ {truck['route']}\n\n"
+                          "🚛 የጭነት መኪና መፈለግን ይጫኑ።")
                 )
-            except Exception:
-                pass
+            except Exception: pass
 
     return ConversationHandler.END
 # ==================================================
@@ -1066,23 +945,14 @@ async def truck_all_info(update, context):
 # ==================================================
 
 async def broker_start(update, context):
-    context.user_data.pop("cargo", None)
-    context.user_data.pop("truck", None)
-    context.user_data.pop("owner", None)
-    context.user_data.pop("connect_info", None)
+    context.user_data.clear()
     context.user_data["broker"] = {}
-    await update.message.reply_text(
-        "🆕 **የጭነት ደላላ ምዝገባ**\n\n1️⃣ ሙሉ ስምዎን ይጻፉ።"
-    )
+    await update.message.reply_text("🆕 **የጭነት ደላላ ምዝገባ**\n\n1️⃣ ሙሉ ስምዎን ይጻፉ።")
     return BROKER_NAME
 
 async def broker_name(update, context):
     context.user_data["broker"]["name"] = update.message.text.strip()
-    await update.message.reply_text(
-        "2️⃣ ስልክ ቁጥርዎን ይጻፉ።\n"
-        "በ09 ወይም በ07 የሚጀመር እና 10 ዲጂት ያለው መሆን አለበት።\n"
-        "ምሳሌ፦ 0912345678"
-    )
+    await update.message.reply_text("2️⃣ ስልክ ቁጥርዎን ይጻፉ።\nበ09 ወይም በ07 የሚጀመር እና 10 ዲጂት ያለው መሆን አለበት።\nምሳሌ፦ 0912345678")
     return BROKER_PHONE
 
 async def broker_phone(update, context):
@@ -1092,9 +962,7 @@ async def broker_phone(update, context):
         await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
         return BROKER_PHONE
     context.user_data["broker"]["phone"] = phone
-    await update.message.reply_text(
-        "3️⃣ የሚሰሩበትን አድራሻ ይጻፉ።\nምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር"
-    )
+    await update.message.reply_text("3️⃣ የሚሰሩበትን አድራሻ ይጻፉ።\nምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር")
     return BROKER_ADDRESS
 
 async def broker_address(update, context):
@@ -1103,237 +971,113 @@ async def broker_address(update, context):
     context.user_data["broker"]["address"] = address
 
     broker = {
-        "user_id": user.id,
-        "name": context.user_data["broker"]["name"],
-        "username": user.username or "",
-        "phone": context.user_data["broker"]["phone"],
-        "address": address,
-        "timestamp": datetime.now().isoformat(),
+        "user_id": user.id, "name": context.user_data["broker"]["name"],
+        "username": user.username or "", "phone": context.user_data["broker"]["phone"],
+        "address": address, "timestamp": datetime.now().isoformat(),
     }
 
     brokers.append(broker)
-    try:
-        db_save_broker(broker)
-    except Exception as e:
-        print(f"DB SAVE BROKER ERROR: {e}")
+    try: db_save_broker(broker)
+    except Exception as e: print(f"DB SAVE BROKER ERROR: {e}")
 
     await update.message.reply_text(
-        "✅ **ስለተመዘገቡ እናመሰግናለን!**\n\n"
-        "የጭነት ደላላ መሆንዎን አረጋግጠን "
-        "አብረን በጋራ እንሰራለን።\n\n"
-        "📌 ማረጋገጫ ሲደረግ ይነገርዎታል።",
+        "✅ **ስለተመዘገቡ እናመሰግናለን!**\n\nየጭነት ደላላ መሆንዎን አረጋግጠን አብረን በጋራ እንሰራለን።\n\n📌 ማረጋገጫ ሲደረግ ይነገርዎታል።",
         reply_markup=main_menu(user.id)
     )
-
     await send_admin_broker_notification(context, broker)
-
     return ConversationHandler.END
-
-# ==================================================
-# SEND ADMIN BROKER NOTIFICATION
-# ==================================================
 
 async def send_admin_broker_notification(context, broker):
     notification_text = (
         "🆕 **TANA CARGO — አዲስ የጭነት ደላላ ተመዝግቧል!**\n\n"
-        f"👤 **ስም:** {broker['name']}\n"
-        f"🔗 **Username:** @{broker['username'] or 'የለም'}\n"
-        f"🆔 **Telegram ID:** {broker['user_id']}\n"
-        f"📞 **ስልክ:** {broker['phone']}\n"
+        f"👤 **ስም:** {broker['name']}\n🔗 **Username:** @{broker['username'] or 'የለም'}\n"
+        f"🆔 **Telegram ID:** {broker['user_id']}\n📞 **ስልክ:** {broker['phone']}\n"
         f"📍 **አድራሻ:** {broker['address']}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📌 **የጭነት ደላላ መሆኑን ያረጋግጡ።**\n"
-        "✅ Right = አረጋግጥ\n"
-        "❌ X = ውድቅ አድርግ"
+        "━━━━━━━━━━━━━━━━━━━━\n📌 **የጭነት ደላላ መሆኑን ያረጋግጡ።**\n✅ Right = አረጋግጥ\n❌ X = ውድቅ አድርግ"
     )
-
     broker_idx = len(brokers) - 1
-
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Right", callback_data=f"brokerright_{broker_idx}"),
-            InlineKeyboardButton("❌ X አጥፋ", callback_data=f"brokerxdelete_{broker_idx}"),
-        ]
-    ])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Right", callback_data=f"brokerright_{broker_idx}"), InlineKeyboardButton("❌ X አጥፋ", callback_data=f"brokerxdelete_{broker_idx}")]])
 
     for admin_id in get_admin_ids():
-        try:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=notification_text,
-                reply_markup=kb
-            )
-        except Exception:
-            pass
-
-# ==================================================
-# BROKER RIGHT CONFIRM
-# ==================================================
+        try: await context.bot.send_message(chat_id=admin_id, text=notification_text, reply_markup=kb)
+        except Exception: pass
 
 async def broker_right_confirm(update, context):
     query = update.callback_query
     await query.answer()
-
     if not is_admin(update.effective_user.id):
         await query.answer("❌ Admin ብቻ።", show_alert=True)
         return
-
-    try:
-        index = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-
-    if index < 0 or index >= len(brokers):
-        return
+    try: index = int(query.data.split("_")[1])
+    except (ValueError, IndexError): return
+    if index < 0 or index >= len(brokers): return
 
     broker = brokers[index]
-
     if broker.get("approved"):
         await query.answer("⚠️ ይህ ቀድሞ ጸድቋል!", show_alert=True)
         return
 
     broker["approved"] = True
     broker["active"] = True
-
     await query.edit_message_text("✅ **የጭነት ደላላው ጸድቋል!**\n\nለደላላው ማሳወቂያ ተልኳል።")
 
-    broker_user_id = broker.get("user_id")
-    if broker_user_id:
+    if broker.get("user_id"):
         try:
-            approval_text = (
-                "🎉 **እንኳን ደስ አለዎት!** 🎉\n\n"
-                "**የጣና ጭነት አባል ሆነዋል!**\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "📦 **ጭነት ካለዎት** ወይም\n"
-                "🚛 **የጭነት መኪና ካለዎት**\n\n"
-                "✅ **በነፃ ይለጥፉ!**\n\n"
-                "🔒 መረጃዎ **100% የተጠበቀ** ነው።\n\n"
-                "💰 ደንበኛ ፈልገን ስናገናኛቸው ብቻ "
-                "ከሚያገኙት ኮሚሽን ላይ **5% ብቻ** "
-                "ለጣና ጭነት ይከፍላሉ።\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "🙏 እኛን ስለመረጡ እናመሰግናለን!"
-            )
-            await context.bot.send_message(chat_id=broker_user_id, text=approval_text)
-        except Exception:
-            pass
-
-# ==================================================
-# BROKER X DELETE
-# ==================================================
+            await context.bot.send_message(chat_id=broker["user_id"], text="🎉 **እንኳን ደስ አለዎት!** 🎉\n\n**የጣና ጭነት አባል ሆነዋል!**\n\n📦 **ጭነት ካለዎት** ወይም\n🚛 **የጭነት መኪና ካለዎት**\n\n✅ **በነፃ ይለጥፉ!**\n\n🔒 መረጃዎ **100% የተጠበቀ** ነው።\n\n💰 ደንበኛ ፈልገን ስናገናኛቸው ብቻ ከሚያገኙት ኮሚሽን ላይ **5% ብቻ** ለጣና ጭነት ይከፍላሉ።\n\n🙏 እኛን ስለመረጡ እናመሰግናለን!")
+        except Exception: pass
 
 async def broker_x_delete(update, context):
     query = update.callback_query
     await query.answer()
-
     if not is_super_admin(update.effective_user.id):
         await query.answer("❌ Super Admin ብቻ!", show_alert=True)
         return
-
-    try:
-        index = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-
-    if index < 0 or index >= len(brokers):
-        return
+    try: index = int(query.data.split("_")[1])
+    except (ValueError, IndexError): return
+    if index < 0 or index >= len(brokers): return
 
     broker = brokers[index]
     broker["active"] = False
     broker["approved"] = False
-
-    await query.edit_message_text(
-        "❌ **ውድቅ ተደርጓል!**\n\n"
-        "ይህ የጭነት ደላላ በ Super Admin ውድቅ ተደርጓል።"
-    )
-
-    broker_user_id = broker.get("user_id")
-    if broker_user_id:
-        try:
-            rejection_text = (
-                "❌ **የጭነት ደላላ ምዝገባ ውድቅ ተደርጓል።**\n\n"
-                "የጣና ካርጎ አባላቶች ባገኙት መረጃ መሰረት "
-                "እርሶ **የጭነት ደላላ አይደሉም**።\n\n"
-                "ገፃችንን ስለጎበኙ እናመሰግናለን! 🙏"
-            )
-            await context.bot.send_message(chat_id=broker_user_id, text=rejection_text)
-        except Exception:
-            pass
-
-# ==================================================
-# SHOW BROKER REGISTRY
-# ==================================================
+    await query.edit_message_text("❌ **ውድቅ ተደርጓል!**\n\nይህ የጭነት ደላላ በ Super Admin ውድቅ ተደርጓል።")
+    if broker.get("user_id"):
+        try: await context.bot.send_message(chat_id=broker["user_id"], text="❌ **የጭነት ደላላ ምዝገባ ውድቅ ተደርጓል።**\n\nገፃችንን ስለጎበኙ እናመሰግናለን! 🙏")
+        except Exception: pass
 
 async def show_broker_registry(update, context):
     user_id = update.effective_user.id
-
     if not is_admin(user_id):
         await update.message.reply_text("❌ Admin ብቻ ይህን ማየት ይችላል።")
         return
-
     if not brokers:
         await update.message.reply_text("📋 እስካሁን የተመዘገበ የጭነት ደላላ የለም።")
         return
-
     for i, broker in enumerate(brokers):
-        if not broker.get("approved"):
-            status = "⏳ በመጠበቅ"
-        elif broker.get("active"):
-            status = "✅ ጸድቋል"
-        else:
-            status = "❌ ውድቅ"
-
-        text = (
-            f"📋 **የጭነት ደላላ #{i + 1}**\n\n"
-            f"👤 ስም: {broker.get('name', 'N/A')}\n"
-            f"🔗 Username: @{broker.get('username') or 'የለም'}\n"
-            f"🆔 Telegram ID: {broker.get('user_id', 'N/A')}\n"
-            f"📞 ስልክ: {broker.get('phone', 'N/A')}\n"
-            f"📍 አድራሻ: {broker.get('address', 'N/A')}\n"
-            f"📌 ሁኔታ: {status}\n"
-        )
-
+        status = "⏳ በመጠበቅ" if not broker.get("approved") else ("✅ ጸድቋል" if broker.get("active") else "❌ ውድቅ")
+        text = (f"📋 **የጭነት ደላላ #{i + 1}**\n\n👤 ስም: {broker.get('name', 'N/A')}\n🔗 Username: @{broker.get('username') or 'የለም'}\n"
+                f"🆔 Telegram ID: {broker.get('user_id', 'N/A')}\n📞 ስልክ: {broker.get('phone', 'N/A')}\n"
+                f"📍 አድራሻ: {broker.get('address', 'N/A')}\n📌 ሁኔታ: {status}\n")
         buttons = []
         if is_super_admin(user_id):
-            buttons.append([
-                InlineKeyboardButton(
-                    f"🗑️ #{i + 1} አጥፋ (Super)",
-                    callback_data=f"admindeletebroker_{i}"
-                )
-            ])
-
-        if buttons:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-        else:
-            await update.message.reply_text(text)
-
-# ==================================================
-# ADMIN DELETE BROKER
-# ==================================================
+            buttons.append([InlineKeyboardButton(f"🗑️ #{i + 1} አጥፋ (Super)", callback_data=f"admindeletebroker_{i}")])
+        if buttons: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+        else: await update.message.reply_text(text)
 
 async def admin_delete_broker(update, context):
     query = update.callback_query
     await query.answer()
-
     if not is_super_admin(update.effective_user.id):
         await query.answer("❌ Super Admin ብቻ!", show_alert=True)
         return
-
-    try:
-        index = int(query.data.split("_")[-1])
-    except ValueError:
-        return
-
-    if index < 0 or index >= len(brokers):
-        return
-
+    try: index = int(query.data.split("_")[-1])
+    except ValueError: return
+    if index < 0 or index >= len(brokers): return
     brokers[index]["active"] = False
     brokers[index]["approved"] = False
-
     await query.edit_message_text("✅ **የጭነት ደላላው ተሰርዟል።**")
 
 # ==================================================
-# FIND CARGO
+# FIND CARGO / TRUCK
 # ==================================================
 
 async def find_cargo(update, context):
@@ -1341,81 +1085,32 @@ async def find_cargo(update, context):
     is_admin_user = is_admin(update.effective_user.id)
 
     if not active_cargos:
-        await update.message.reply_text(
-            "📦 በአሁኑ ጊዜ ተስማሚ ጭነት የለም።\n\n"
-            "🔎 ጭነት እያፈላለግን ነው።\n"
-            "🔔 ተስማሚ ጭነት ሲገኝ እናሳውቅዎታለን።",
-            reply_markup=main_menu(update.effective_user.id)
-        )
+        await update.message.reply_text("📦 በአሁኑ ጊዜ ተስማሚ ጭነት የለም።", reply_markup=main_menu(update.effective_user.id))
         return
 
     for i, cargo in enumerate(active_cargos):
         cargo_id = f"{i + 1:03d}"
-        price_display = cargo.get("price_display", "በስምምነት")
-
         real_index = cargo_posts.index(cargo)
         is_selected = is_already_selected("cargo", real_index)
-
         status_mark = "❌ " if is_selected else ""
-
         admin_info = ""
         if is_admin_user:
-            owner_name = users.get(cargo["user_id"], {}).get("name", "N/A")
-            owner_username = users.get(cargo["user_id"], {}).get("username", "")
-            admin_info = (
-                f"👤 ስም: {owner_name}\n"
-                f"🔗 @{owner_username or 'የለም'}\n"
-                f"🆔 ID: {cargo['user_id']}\n"
-                f"📞 ስልክ: {cargo.get('phone', 'N/A')}\n"
-            )
-
-        poster_label = "🏷️ Broker" if cargo.get("poster_type") == "broker" else "🏷️ Customer"
-
-        msg = (
-            f"{status_mark}📦 **ጭነት {cargo_id}**\n"
-            f"{poster_label}\n"
-            f"📍 መነሻ፦ {cargo['from']}\n"
-            f"📍 መድረሻ፦ {cargo['to']}\n"
-            f"📦 አይነት፦ {cargo['type']}\n"
-            f"🚛 የሚፈለግ መኪና፦ {cargo['vehicle']}\n"
-            f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n"
-            f"⚖️ ክብደት፦ {cargo['weight']}\n"
-            f"📅 ቀን (ET)፦ {cargo.get('date_et', 'N/A')}\n"
-            f"📅 ቀን (GC)፦ {cargo.get('date_gc', 'N/A')}\n"
-            f"💰 ዋጋ፦ {price_display}\n"
-            f"{admin_info}"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-
-        if is_selected:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    f"❌ ጭነት {cargo_id} ተመርጧል",
-                    callback_data="already_selected"
-                )
-            ]])
-        else:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    f"የመረጡት ጭነት {cargo_id} ከሆነ እዚጋ ያጫኑ 👈",
-                    callback_data=f"connect_{real_index}"
-                )
-            ]])
-
+            admin_info = (f"👤 ስም: {users.get(cargo['user_id'], {}).get('name', 'N/A')}\n"
+                          f"🔗 @{users.get(cargo['user_id'], {}).get('username', '') or 'የለም'}\n"
+                          f"🆔 ID: {cargo['user_id']}\n📞 ስልክ: {cargo.get('phone', 'N/A')}\n")
+        
+        msg = (f"{status_mark}📦 **ጭነት {cargo_id}**\n📍 መነሻ፦ {cargo['from']}\n📍 መድረሻ፦ {cargo['to']}\n"
+               f"📦 አይነት፦ {cargo['type']}\n🚛 የሚፈለግ መኪና፦ {cargo['vehicle']}\n"
+               f"📊 መጠን፦ {cargo['size_name']} ({cargo['size']}%)\n⚖️ ክብደት፦ {cargo['weight']}\n"
+               f"📅 ቀን (ET)፦ {cargo.get('date_et', 'N/A')}\n💰 ዋጋ፦ {cargo.get('price_display', 'N/A')}\n{admin_info}"
+               "━━━━━━━━━━━━━━━━━━━━")
+        
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ተመርጧል", callback_data="already_selected")]]) if is_selected else \
+             InlineKeyboardMarkup([[InlineKeyboardButton("ይህን ጭነት ምረጥ 👈", callback_data=f"connect_{real_index}")]])
         await update.message.reply_text(msg, reply_markup=kb)
 
-# ==================================================
-# FIND TRUCK (SIMPLIFIED)
-# ==================================================
-
 async def find_truck(update, context):
-    await update.message.reply_text(
-        "🔎 **የጭነት መኪና መፈለግ**\n\n"
-        "እባክዎ የሚፈልጉትን የመኪና አይነት ወይም የመንገድ አቅጣጫ ይጻፉ።\n"
-        "ለምሳሌ፦ Isuzu ወይም ባህር ዳር\n\n"
-        "👉 ሁሉንም መኪኖች ለማየት 'ሁሉም' ብለው ይጻፉ።",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await update.message.reply_text("🔎 **የጭነት መኪና መፈለግ**\n\nእባክዎ የሚፈልጉትን የመኪና አይነት ወይም የመንገድ አቅጣጫ ይጻፉ።\nለምሳሌ፦ Isuzu ወይም ባህር ዳር\n\n👉 ሁሉንም መኪኖች ለማየት 'ሁሉም' ብለው ይጻፉ።", reply_markup=ReplyKeyboardRemove())
     return FIND_TRUCK_QUERY
 
 async def find_truck_query(update, context):
@@ -1432,188 +1127,77 @@ async def find_truck_query(update, context):
         active_trucks = filtered
 
     if not active_trucks:
-        await update.message.reply_text(
-            f"🚛 '{query}' ጋር የሚዛመድ ንቁ የጭነት መኪና አልተገኘም።\n\n"
-            "እባክዎ ሌላ ቃል ይፈልጉ ወይም 'ሁሉም' ብለው ይጻፉ።",
-            reply_markup=main_menu(update.effective_user.id)
-        )
+        await update.message.reply_text(f"🚛 '{query}' ጋር የሚዛመድ ንቁ የጭነት መኪና አልተገኘም።", reply_markup=main_menu(update.effective_user.id))
         return ConversationHandler.END
 
-    await update.message.reply_text(
-        f"🔎 **የተገኙ የጭነት መኪናዎች (ጠቅላላ {len(active_trucks)})**",
-        reply_markup=main_menu(update.effective_user.id)
-    )
-
+    await update.message.reply_text(f"🔎 **የተገኙ የጭነት መኪናዎች (ጠቅላላ {len(active_trucks)})**", reply_markup=main_menu(update.effective_user.id))
     is_admin_user = is_admin(update.effective_user.id)
     limit = 20 if is_admin_user else 10
 
     for i, truck in enumerate(active_trucks[:limit]):
         truck_id = f"{i + 1:03d}"
-        route_display = truck.get("route", "N/A")
         real_index = truck_posts.index(truck)
         is_selected = is_already_selected("truck", real_index)
         status_mark = "❌ " if is_selected else ""
-
         admin_info = ""
         if is_admin_user:
-            owner_name = users.get(truck["user_id"], {}).get("name", "N/A")
-            owner_username = users.get(truck["user_id"], {}).get("username", "")
-            admin_info = (
-                f"👤 ስም: {owner_name}\n"
-                f"🔗 @{owner_username or 'የለም'}\n"
-                f"🆔 ID: {truck['user_id']}\n"
-                f"📞 ስልክ: {truck.get('phone', 'N/A')}\n"
-                f"🔢 ታርጋ: {truck.get('plate', 'N/A')}\n"
-                f"👨‍✈️ ሹፌር: {truck.get('driver', 'N/A')}\n"
-            )
-
-        poster_label = "🏷️ Broker" if truck.get("poster_type") == "broker" else "🏷️ Customer"
-
-        msg = (
-            f"{status_mark}🚛 **የጭነት መኪና {truck_id}**\n"
-            f"{poster_label}\n"
-            f"🔹 አይነት፦ {truck['type']}\n"
-            f"⚖️ አቅም፦ {truck['capacity']}\n"
-            f"🛣️ መንገድ/አድራሻ፦ {route_display}\n"
-            f"{admin_info}"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-
-        if is_selected:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(f"❌ መኪና {truck_id} ተመርጧል", callback_data="already_selected")
-            ]])
-        else:
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(f"የመረጡት የጭነት መኪና {truck_id} ከሆነ ይጫኑ 👈", callback_data=f"truckconnect_{real_index}")
-            ]])
-
+            admin_info = (f"👤 ስም: {users.get(truck['user_id'], {}).get('name', 'N/A')}\n"
+                          f"📞 ስልክ: {truck.get('phone', 'N/A')}\n🔢 ታርጋ: {truck.get('plate', 'N/A')}\n"
+                          f"👨‍✈️ ሹፌር: {truck.get('driver', 'N/A')}\n")
+        
+        msg = (f"{status_mark}🚛 **የጭነት መኪና {truck_id}**\n🔹 አይነት፦ {truck['type']}\n⚖️ አቅም፦ {truck['capacity']}\n"
+               f"🛣️ መንገድ/አድራሻ፦ {truck.get('route', 'N/A')}\n{admin_info}━━━━━━━━━━━━━━━━━━━━")
+        
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ ተመርጧል", callback_data="already_selected")]]) if is_selected else \
+             InlineKeyboardMarkup([[InlineKeyboardButton("ይህን መኪና ምረጥ 👈", callback_data=f"truckconnect_{real_index}")]])
         await update.message.reply_text(msg, reply_markup=kb)
 
     return ConversationHandler.END
 
-# ==================================================
-# ALREADY SELECTED CALLBACK
-# ==================================================
-
 async def already_selected_callback(update, context):
-    query = update.callback_query
-    await query.answer(
-        "❌ ይቅርታ የመረጡት ጭነት/የጭነት መኪና በሌላ ደንበኛችን በድርድር ላይ ነው።\n\n"
-        "እባክዎ ሌላ ተስማሚ ይምረጡ።",
-        show_alert=True
-    )
+    await update.callback_query.answer("❌ ይቅርታ የመረጡት በሌላ ደንበኛችን በድርድር ላይ ነው።", show_alert=True)
 
 # ==================================================
-# CARGO CONNECTION REQUEST
+# CONNECTIONS
 # ==================================================
 
 async def connection_request(update, context):
     query = update.callback_query
     await query.answer()
-
     index = int(query.data.split("_")[1])
-
-    if index < 0 or index >= len(cargo_posts):
-        await query.edit_message_text("❌ ይህ ጭነት ከአሁን በኋላ አይገኝም።")
-        return ConversationHandler.END
-
+    if index < 0 or index >= len(cargo_posts): return ConversationHandler.END
     cargo = cargo_posts[index]
-
-    if not cargo.get("active", True):
-        await query.edit_message_text("❌ ይህ ጭነት ተወግዷል።")
-        return ConversationHandler.END
-
+    if not cargo.get("active", True): return ConversationHandler.END
     requester = update.effective_user
-
-    if is_selected_by_other("cargo", index, requester.id):
-        await query.answer("❌ ይቅርታ የመረጡት ጭነት በሌላ ደንበኛችን በድርድር ላይ ነው።", show_alert=True)
-        return ConversationHandler.END
-
     if cargo["user_id"] == requester.id:
         await query.answer("❌ የራስዎን ጭነት መጠየቅ አይችሉም።", show_alert=True)
         return ConversationHandler.END
 
-    for req in connection_requests:
-        if (req.get("type") == "cargo" and req.get("cargo_index") == index
-            and req["requester_id"] == requester.id
-            and req["status"] in ["pending", "negotiating", "awaiting_payment", "admin_confirming"]):
-            await query.answer("⚠️ ይህን ጭነት አስቀድመው ጠይቀዋል።", show_alert=True)
-            return ConversationHandler.END
-
-    context.user_data["connect_info"] = {
-        "type": "cargo",
-        "item_index": index,
-        "requester_id": requester.id,
-        "requester_name": requester.full_name,
-        "requester_username": requester.username or "",
-    }
-
+    context.user_data["connect_info"] = {"type": "cargo", "item_index": index, "requester_id": requester.id, "requester_name": requester.full_name, "requester_username": requester.username or ""}
     await query.edit_message_text("📝 **መረጃዎን ያስገቡ**\n\n1️⃣ ሙሉ ስምዎን ይጻፉ።")
     return CONNECT_NAME
-
-# ==================================================
-# TRUCK CONNECTION REQUEST
-# ==================================================
 
 async def truck_connection_request(update, context):
     query = update.callback_query
     await query.answer()
-
     index = int(query.data.split("_")[1])
-
-    if index < 0 or index >= len(truck_posts):
-        await query.edit_message_text("❌ ይህ መኪና ከአሁን በኋላ አይገኝም።")
-        return ConversationHandler.END
-
+    if index < 0 or index >= len(truck_posts): return ConversationHandler.END
     truck = truck_posts[index]
-
-    if not truck.get("active", True):
-        await query.edit_message_text("❌ ይህ መኪና ተወግዷል።")
-        return ConversationHandler.END
-
+    if not truck.get("active", True): return ConversationHandler.END
     requester = update.effective_user
-
-    if is_selected_by_other("truck", index, requester.id):
-        await query.answer("❌ ይቅርታ የመረጡት የጭነት መኪና በሌላ ደንበኛችን በድርድር ላይ ነው።", show_alert=True)
-        return ConversationHandler.END
-
     if truck["user_id"] == requester.id:
         await query.answer("❌ የራስዎን መኪና መጠየቅ አይችሉም።", show_alert=True)
         return ConversationHandler.END
 
-    for req in connection_requests:
-        if (req.get("type") == "truck" and req.get("truck_index") == index
-            and req["requester_id"] == requester.id
-            and req["status"] in ["pending", "negotiating", "awaiting_payment", "admin_confirming"]):
-            await query.answer("⚠️ ይህን መኪና አስቀድመው ጠይቀዋል።", show_alert=True)
-            return ConversationHandler.END
-
-    context.user_data["connect_info"] = {
-        "type": "truck",
-        "item_index": index,
-        "requester_id": requester.id,
-        "requester_name": requester.full_name,
-        "requester_username": requester.username or "",
-    }
-
+    context.user_data["connect_info"] = {"type": "truck", "item_index": index, "requester_id": requester.id, "requester_name": requester.full_name, "requester_username": requester.username or ""}
     await query.edit_message_text("📝 **መረጃዎን ያስገቡ**\n\n1️⃣ ሙሉ ስምዎን ይጻፉ።")
     return CONNECT_NAME
-
-# ==================================================
-# CONNECT_NAME → CONNECT_PHONE → CONNECT_TYPE
-# ==================================================
 
 async def connect_name(update, context):
     info = context.user_data.get("connect_info", {})
     info["name"] = update.message.text.strip().split("\n")[0].strip()
     context.user_data["connect_info"] = info
-
-    await update.message.reply_text(
-        "2️⃣ **ስልክ ቁጥርዎን** ይጻፉ።\n"
-        "በ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\n"
-        "ምሳሌ፦ 0912345678"
-    )
+    await update.message.reply_text("2️⃣ **ስልክ ቁጥርዎን** ይጻፉ።\nበ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\nምሳሌ፦ 0912345678")
     return CONNECT_PHONE
 
 async def connect_phone(update, context):
@@ -1622,101 +1206,53 @@ async def connect_phone(update, context):
     if not is_valid:
         await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
         return CONNECT_PHONE
-
     info = context.user_data.get("connect_info", {})
     info["phone"] = phone
     context.user_data["connect_info"] = info
-
-    await update.message.reply_text(
-        "3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።\n"
-        "ምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር"
-    )
+    await update.message.reply_text("3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።\nምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር")
     return CONNECT_TYPE
 
 async def connect_type(update, context):
     info = context.user_data.get("connect_info", {})
-    text = update.message.text.strip().split("\n")[0].strip()
-
-    info["requester_address"] = text
+    info["requester_address"] = update.message.text.strip().split("\n")[0].strip()
     context.user_data["connect_info"] = info
     requester = update.effective_user
 
     if info.get("type") == "cargo":
         cargo = cargo_posts[info["item_index"]]
         request = {
-            "type": "cargo",
-            "cargo_index": info["item_index"],
-            "cargo_owner_id": cargo["user_id"],
-            "requester_id": requester.id,
-            "requester_name": info.get("name", requester.full_name),
-            "requester_username": info.get("requester_username", ""),
-            "requester_phone": info.get("phone", ""),
-            "requester_address": info.get("requester_address", ""),
-            "requester_plate": "",
-            "status": "admin_confirming",
-            "offers": [], "current_offer": None, "current_offer_by": None,
-            "offer_version": 0, "final_price": None,
-            "requester_confirmed": False, "other_confirmed": False,
-            "requester_payment_submitted": False, "other_payment_submitted": False,
-            "requester_payment_approved": False, "other_payment_approved": False,
-            "requester_payment_rejected": False, "other_payment_rejected": False,
-            "requester_payment_version": 0, "other_payment_version": 0,
-            "full_info_shared": False, "admin_right_confirmed": False,
-            "seeker_notified": False, "owner_notified": False,
-            "owner_2_notified": False,
-            "created_at": datetime.now().isoformat(),
+            "type": "cargo", "cargo_index": info["item_index"], "cargo_owner_id": cargo["user_id"],
+            "requester_id": requester.id, "requester_name": info.get("name", requester.full_name),
+            "requester_username": info.get("requester_username", ""), "requester_phone": info.get("phone", ""),
+            "requester_address": info.get("requester_address", ""), "status": "admin_confirming",
+            "offers": [], "current_offer": None, "current_offer_by": None, "offer_version": 0, "final_price": None,
+            "requester_confirmed": False, "other_confirmed": False, "requester_payment_submitted": False, "other_payment_submitted": False,
+            "requester_payment_approved": False, "other_payment_approved": False, "requester_payment_rejected": False, "other_payment_rejected": False,
+            "requester_payment_version": 0, "other_payment_version": 0, "full_info_shared": False, "admin_right_confirmed": False,
+            "seeker_notified": False, "owner_notified": False, "created_at": datetime.now().isoformat()
         }
-        
-        msg_text = (
-            "✅ **እናመሰግናለን!**\n\n"
-            "📌 ምዝገባዎን ጨርሰዋል።\n\n"
-            "⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
-            "ውድ ደንበኛችን ባለጭነት ጋር ተስማምተው ጭነተዎን ጭነው ጉዞ ከመጀመርዎ በፊት ባለጭነት እርሶ የጫኑለትን ጭነት መከታተል እንዲችል የስልክዎን location ና የኢንተርኔት ዳታ አብርተው የጭነት ክትትል የምትለዋን ምናሌ ተጭነው አዲስ ጉዞ ክፈት (ሹፌር) የምትለዋን ተጭነው መረጃ ያጋሩ ጉዞ ሲጨርሱ location off ያድርጉ። ለበለጠ መረጃ👉 @tanapage በመንካት join ያድርጉ።\n\n"
-            "🙏 እናመሰግናለን!"
-        )
+        msg_text = ("✅ **እናመሰግናለን!**\n\n📌 ምዝገባዎን ጨርሰዋል።\n⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
+                    "ውድ ደንበኛችን ባለጭነት ጋር ተስማምተው ጭነተዎን ጭነው ጉዞ ከመጀመርዎ በፊት ባለጭነት እርሶ የጫኑለትን ጭነት መከታተል እንዲችል የስልክዎን location ና የኢንተርኔት ዳታ አብርተው የጭነት ክትትል የምትለዋን ምናሌ ተጭነው አዲስ ጉዞ ክፈት (ሹፌር) የምትለዋን ተጭነው መረጃ ያጋሩ ጉዞ ሲጨርሱ location off ያድርጉ። ለበለጠ መረጃ👉 @tanapage በመንካት join ያድርጉ።\n\n🙏 እናመሰግናለን!")
     else:
         truck = truck_posts[info["item_index"]]
         request = {
-            "type": "truck",
-            "truck_index": info["item_index"],
-            "truck_owner_id": truck["user_id"],
-            "requester_id": requester.id,
-            "requester_name": info.get("name", requester.full_name),
-            "requester_username": info.get("requester_username", ""),
-            "requester_phone": info.get("phone", ""),
-            "requester_address": info.get("requester_address", ""),
-            "requester_route": "",
-            "status": "admin_confirming",
-            "offers": [], "current_offer": None, "current_offer_by": None,
-            "offer_version": 0, "final_price": None,
-            "requester_confirmed": False, "other_confirmed": False,
-            "requester_payment_submitted": False, "other_payment_submitted": False,
-            "requester_payment_approved": False, "other_payment_approved": False,
-            "requester_payment_rejected": False, "other_payment_rejected": False,
-            "requester_payment_version": 0, "other_payment_version": 0,
-            "full_info_shared": False, "admin_right_confirmed": False,
-            "seeker_notified": False, "owner_notified": False,
-            "owner_2_notified": False,
-            "created_at": datetime.now().isoformat(),
+            "type": "truck", "truck_index": info["item_index"], "truck_owner_id": truck["user_id"],
+            "requester_id": requester.id, "requester_name": info.get("name", requester.full_name),
+            "requester_username": info.get("requester_username", ""), "requester_phone": info.get("phone", ""),
+            "requester_address": info.get("requester_address", ""), "status": "admin_confirming",
+            "offers": [], "current_offer": None, "current_offer_by": None, "offer_version": 0, "final_price": None,
+            "requester_confirmed": False, "other_confirmed": False, "requester_payment_submitted": False, "other_payment_submitted": False,
+            "requester_payment_approved": False, "other_payment_approved": False, "requester_payment_rejected": False, "other_payment_rejected": False,
+            "requester_payment_version": 0, "other_payment_version": 0, "full_info_shared": False, "admin_right_confirmed": False,
+            "seeker_notified": False, "owner_notified": False, "created_at": datetime.now().isoformat()
         }
-        
-        msg_text = (
-            "✅ **እናመሰግናለን!**\n\n"
-            "📌 ምዝገባዎን ጨርሰዋል።\n\n"
-            "⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
-            "ውድ ደንበኛችን ጭነተዎን በgoogle map መከታተል ከፈለጉ የጭነት ክትትል የምትለዋን ምናሌ ተጭነው የኔን ጭነት መከታተል ኮድ ጠይቅ (ደንበኛ) የምትለዋን ተጭነው በመመሪያው መሰረት ይሙሉና ጭነተዎን ይከታተሉ። ለበለጠ መረጃ 👉@tanapage በመጫን join ያድርጉ።\n\n"
-            "🙏 እናመሰግናለን!"
-        )
+        msg_text = ("✅ **እናመሰግናለን!**\n\n📌 ምዝገባዎን ጨርሰዋል።\n⏳ ከተወሰኑ ደቂቃዎች በኋላ እንደውልልዎታለን።\n\n"
+                    "ውድ ደንበኛችን ጭነተዎን በgoogle map መከታተል ከፈለጉ የጭነት ክትትል የምትለዋን ምናሌ ተጭነው የኔን ጭነት መከታተል ኮድ ጠይቅ (ደንበኛ) የምትለዋን ተጭነው በመመሪያው መሰረት ይሙሉና ጭነተዎን ይከታተሉ። ለበለጠ መረጃ 👉@tanapage በመጫን join ያድርጉ።\n\n🙏 እናመሰግናለን!")
 
     connection_requests.append(request)
     req_index = len(connection_requests) - 1
     context.user_data.pop("connect_info", None)
-
-    await update.message.reply_text(
-        msg_text,
-        reply_markup=main_menu(requester.id)
-    )
-
+    await update.message.reply_text(msg_text, reply_markup=main_menu(requester.id))
     await send_admin_notification(context, req_index)
     return ConversationHandler.END
 # ==================================================
@@ -1725,240 +1261,86 @@ async def connect_type(update, context):
 
 async def send_admin_notification(context, req_index):
     req = connection_requests[req_index]
-
-    if req.get("admin_notified"):
-        return
+    if req.get("admin_notified"): return
     req["admin_notified"] = True
 
     if req.get("type") == "cargo":
         cargo = cargo_posts[req["cargo_index"]]
-        cargo_owner_name = users.get(cargo["user_id"], {}).get("name", "N/A")
-        cargo_owner_username = users.get(cargo["user_id"], {}).get("username", "")
-        cargo_owner_phone = cargo.get("phone", "N/A")
-        poster_label = "🏷️ Broker" if cargo.get("poster_type") == "broker" else "🏷️ Customer"
-
-        notification_text = (
-            "🔔 **TANA CARGO — አዲስ ግንኙነት ጥያቄ**\n\n"
-            f"📌 Request ID: {req_index}\n\n"
-            f"📦 **የጭነት ዝርዝር:** {poster_label}\n"
-            f"   • መነሻ: {cargo['from']}\n"
-            f"   • መድረሻ: {cargo['to']}\n"
-            f"   • አይነት: {cargo['type']}\n"
-            f"   • ክብደት: {cargo['weight']}\n"
-            f"   • ዋጋ: {cargo.get('price_display', 'N/A')}\n\n"
-            f"👤 **የጭነት ባለቤት:**\n"
-            f"   • ስም: {cargo_owner_name}\n"
-            f"   • Username: @{cargo_owner_username or 'የለም'}\n"
-            f"   • ስልክ: {cargo_owner_phone}\n\n"
-            f"👤 **ጠያቂ:**\n"
-            f"   • ስም: {req.get('requester_name', 'N/A')}\n"
-            f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
-            f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-            f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "📌 **የግንኙነት ጥያቄ ያቀረቡ ደንበኞች አሉ!**\n\n"
-            "⏰ **እባክዎን ቶሎ ያናግሯቸው።**\n\n"
-            "👉 ወደ **🤝 የግንኙነት ጥያቄዎች** ምናሌ በመግባት ይመልከቱ።"
-        )
+        notification_text = (f"🔔 **TANA CARGO — አዲስ ግንኙነት ጥያቄ**\n\n📌 Request ID: {req_index}\n\n"
+                             f"📦 **የጭነት ዝርዝር:**\n   • መነሻ: {cargo['from']}\n   • መድረሻ: {cargo['to']}\n   • አይነት: {cargo['type']}\n   • ክብደት: {cargo['weight']}\n   • ዋጋ: {cargo.get('price_display', 'N/A')}\n\n"
+                             f"👤 **የጭነት ባለቤት:**\n   • ስም: {users.get(cargo['user_id'], {}).get('name', 'N/A')}\n   • Username: @{users.get(cargo['user_id'], {}).get('username', '') or 'የለም'}\n   • ስልክ: {cargo.get('phone', 'N/A')}\n\n"
+                             f"👤 **ጠያቂ:**\n   • ስም: {req.get('requester_name', 'N/A')}\n   • ስልክ: {req.get('requester_phone', 'N/A')}\n   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
+                             "👉 ወደ **🤝 የግንኙነት ጥያቄዎች** ምናሌ በመግባት ይመልከቱ።")
     else:
         truck = truck_posts[req["truck_index"]]
-        truck_owner_name = users.get(truck["user_id"], {}).get("name", "N/A")
-        truck_owner_username = users.get(truck["user_id"], {}).get("username", "")
-        truck_owner_phone = truck.get("phone", "N/A")
-        poster_label = "🏷️ Broker" if truck.get("poster_type") == "broker" else "🏷️ Customer"
-
-        notification_text = (
-            "🔔 **TANA CARGO — አዲስ ግንኙነት ጥያቄ**\n\n"
-            f"📌 Request ID: {req_index}\n\n"
-            f"🚛 **የመኪና ዝርዝር:** {poster_label}\n"
-            f"   • አይነት: {truck['type']}\n"
-            f"   • አቅም: {truck['capacity']}\n"
-            f"   • ታርጋ: {truck.get('plate', 'N/A')}\n"
-            f"   • መንገድ: {truck.get('route', 'N/A')}\n\n"
-            f"👤 **የመኪና ባለቤት:**\n"
-            f"   • ስም: {truck_owner_name}\n"
-            f"   • Username: @{truck_owner_username or 'የለም'}\n"
-            f"   • ስልክ: {truck_owner_phone}\n\n"
-            f"👤 **ጠያቂ:**\n"
-            f"   • ስም: {req.get('requester_name', 'N/A')}\n"
-            f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
-            f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-            f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "📌 **የግንኙነት ጥያቄ ያቀረቡ ደንበኞች አሉ!**\n\n"
-            "⏰ **እባክዎን ቶሎ ያናግሯቸው።**\n\n"
-            "👉 ወደ **🤝 የግንኙነት ጥያቄዎች** ምናሌ በመግባት ይመልከቱ።"
-        )
+        notification_text = (f"🔔 **TANA CARGO — አዲስ ግንኙነት ጥያቄ**\n\n📌 Request ID: {req_index}\n\n"
+                             f"🚛 **የመኪና ዝርዝር:**\n   • አይነት: {truck['type']}\n   • አቅም: {truck['capacity']}\n   • ታርጋ: {truck.get('plate', 'N/A')}\n   • መንገድ: {truck.get('route', 'N/A')}\n\n"
+                             f"👤 **የመኪና ባለቤት:**\n   • ስም: {users.get(truck['user_id'], {}).get('name', 'N/A')}\n   • ስልክ: {truck.get('phone', 'N/A')}\n\n"
+                             f"👤 **ጠያቂ:**\n   • ስም: {req.get('requester_name', 'N/A')}\n   • ስልክ: {req.get('requester_phone', 'N/A')}\n\n"
+                             "👉 ወደ **🤝 የግንኙነት ጥያቄዎች** ምናሌ በመግባት ይመልከቱ።")
 
     for admin_id in get_admin_ids():
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=notification_text)
-        except Exception:
-            pass
-
-# ==================================================
-# ADMIN RIGHT CONFIRM
-# ==================================================
+        try: await context.bot.send_message(chat_id=admin_id, text=notification_text)
+        except Exception: pass
 
 async def admin_right_confirm(update, context):
     query = update.callback_query
     await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    try:
-        index = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-
-    if index < 0 or index >= len(connection_requests):
-        return
-
+    if not is_admin(update.effective_user.id): return
+    try: index = int(query.data.split("_")[1])
+    except (ValueError, IndexError): return
+    if index < 0 or index >= len(connection_requests): return
     req = connection_requests[index]
-
     if req.get("admin_right_confirmed"):
         await query.answer("⚠️ ይህ ቀድሞ ተረጋግጧል!", show_alert=True)
         return
 
     req["admin_right_confirmed"] = True
     req["status"] = "negotiating"
+    if req.get("type") == "cargo" and 0 <= req.get("cargo_index", -1) < len(cargo_posts):
+        cargo_posts[req["cargo_index"]]["active"] = False
+    elif req.get("type") == "truck" and 0 <= req.get("truck_index", -1) < len(truck_posts):
+        truck_posts[req["truck_index"]]["active"] = False
 
-    if req.get("type") == "cargo":
-        ci = req.get("cargo_index")
-        if isinstance(ci, int) and 0 <= ci < len(cargo_posts):
-            cargo_posts[ci]["active"] = False
-    else:
-        ti = req.get("truck_index")
-        if isinstance(ti, int) and 0 <= ti < len(truck_posts):
-            truck_posts[ti]["active"] = False
-
-    await query.edit_message_text(
-        "✅ **Right ተረጋግጧል!**\n\n"
-        "📌 ጭነቱ/መኪናው ከገበያ ተወግዷል።\n"
-        "📌 መረጃው **የግንኙነት ጥያቄዎች** ምናሌ ውስጥ ብቻ ይቀመጣል።\n"
-        "📌 ለሁለቱም ወገኖች ማሳወቂያ ተልኳል።"
-    )
+    await query.edit_message_text("✅ **Right ተረጋግጧል!**\n\n📌 ጭነቱ/መኪናው ከገበያ ተወግዷል።")
 
     seeker_id = req["requester_id"]
-    item_type = "የጭነት መኪና" if req.get("type") == "truck" else "የጭነት"
-
-    seeker_text = f"ውድ ደንበኛችን፣\n\nየፈለጉት {item_type} ባለቤት ምላሽ እንደሰጡ እናሳውቃለን።\n\n📌 እባክዎ ትንሽ ይጠብቁ።\n\n🙏 እናመሰግናለን!"
-
-    try:
-        await context.bot.send_message(chat_id=seeker_id, text=seeker_text)
-        req["seeker_notified"] = True
-    except Exception:
-        pass
-
     owner_id = other_party_id(req)
+    item_type = "የጭነት መኪና" if req.get("type") == "truck" else "የጭነት"
+    try: await context.bot.send_message(chat_id=seeker_id, text=f"ውድ ደንበኛችን፣\n\nየፈለጉት {item_type} ባለቤት ምላሽ እንደሰጡ እናሳውቃለን።\n\n📌 እባክዎ ትንሽ ይጠብቁ።")
+    except Exception: pass
 
-    if req.get("type") == "truck":
-        owner_text = (
-            "ውድ ደንበኛችን፣\n\nየለጠፉትን የጭነት መኪና የሚፈልግ ደንበኛ አግኝተናል!\n\n"
-            "እባክዎ መልዕክቱን እንዳዩ በሚከተሉት ቁጥሮች ይደውሉ፦\n\n"
-            f"📞 {SUPPORT_PHONE}\n📞 {SUPPORT_PHONE_2}\n\nወይም\n\n"
-            f"👉 @{BOT_USERNAME} ተጭነው ከገቡ በኋላ\n"
-            "\"📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ\" የሚለውን ተጭነው መልዕክት ያስቀምጡልን።\n\n🙏 እናመሰግናለን!"
-        )
-    else:
-        owner_text = (
-            "ውድ ደንበኛችን፣\n\nየለጠፉትን ጭነት የሚወስድ ደንበኛ አግኝተናል!\n\n"
-            "እባክዎ መልዕክቱን እንዳዩ በሚከተሉት ቁጥሮች ይደውሉ፦\n\n"
-            f"📞 {SUPPORT_PHONE}\n📞 {SUPPORT_PHONE_2}\n\nወይም\n\n"
-            f"👉 @{BOT_USERNAME} ተጭነው ከገቡ በኋላ\n"
-            "\"📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ\" የሚለውን ተጭነው መልዕክት ያስቀምጡልን።\n\n🙏 እናመሰግናለን!"
-        )
-
-    try:
-        await context.bot.send_message(chat_id=owner_id, text=owner_text)
-        req["owner_notified"] = True
-    except Exception:
-        pass
-
-# ==================================================
-# ADMIN X DELETE
-# ==================================================
+    owner_text = (f"ውድ ደንበኛችን፣\n\nየለጠፉትን {item_type} የሚፈልግ ደንበኛ አግኝተናል!\n\nእባክዎ መልዕክቱን እንዳዩ በሚከተሉት ቁጥሮች ይደውሉ፦\n\n📞 {SUPPORT_PHONE}\n📞 {SUPPORT_PHONE_2}\n\n🙏 እናመሰግናለን!")
+    try: await context.bot.send_message(chat_id=owner_id, text=owner_text)
+    except Exception: pass
 
 async def admin_x_delete(update, context):
     query = update.callback_query
     await query.answer()
-
     if not is_super_admin(update.effective_user.id):
-        await query.answer("❌ Super Admin ብቻ ማጥፋት ይችላል!", show_alert=True)
+        await query.answer("❌ Super Admin ብቻ!", show_alert=True)
         return
-
-    try:
-        index = int(query.data.split("_")[1])
-    except (ValueError, IndexError):
-        return
-
-    if index < 0 or index >= len(connection_requests):
-        return
-
+    try: index = int(query.data.split("_")[1])
+    except (ValueError, IndexError): return
+    if index < 0 or index >= len(connection_requests): return
     req = connection_requests[index]
     req["status"] = "deleted"
-
-    if req.get("type") == "cargo":
-        ci = req.get("cargo_index")
-        if isinstance(ci, int) and 0 <= ci < len(cargo_posts):
-            cargo_posts[ci]["active"] = True
-    else:
-        ti = req.get("truck_index")
-        if isinstance(ti, int) and 0 <= ti < len(truck_posts):
-            truck_posts[ti]["active"] = True
-
-    await query.edit_message_text("❌ **ተሰርዟል!**\n\nይህ ጥያቄ በ Super Admin ተሰርዟል።\n\n📌 ጭነት/መኪናው ነፃ ሆኗል።")
-
-    try:
-        await context.bot.send_message(
-            chat_id=req["requester_id"],
-            text="❌ **ይቅርታ**\n\nየጠየቁት ጭነት/መኪና ውድቅ ሆኗል።\n\nእባክዎ ሌላ ተስማሚ ጭነት/መኪና ይምረጡ።"
-        )
-    except Exception:
-        pass
-
-# ==================================================
-# ADMIN CLEAR
-# ==================================================
-
-async def admin_clear_notification(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    try:
-        await query.delete_message()
-    except Exception:
-        try:
-            await query.edit_message_text("🗑️ ማሳወቂያው ጸድቷል።")
-        except Exception:
-            pass
-
-# ==================================================
-# SHOW CONNECTION REQUESTS
-# ==================================================
+    if req.get("type") == "cargo" and 0 <= req.get("cargo_index", -1) < len(cargo_posts):
+        cargo_posts[req["cargo_index"]]["active"] = True
+    elif req.get("type") == "truck" and 0 <= req.get("truck_index", -1) < len(truck_posts):
+        truck_posts[req["truck_index"]]["active"] = True
+    await query.edit_message_text("❌ **ተሰርዟል!**\n\n📌 ጭነት/መኪናው ነፃ ሆኗል።")
+    try: await context.bot.send_message(chat_id=req["requester_id"], text="❌ **ይቅርታ**\n\nየጠየቁት ጭነት/መኪና ውድቅ ሆኗል።")
+    except Exception: pass
 
 async def show_connection_requests(update, context):
     user_id = update.effective_user.id
-
     if not is_admin(user_id):
-        await update.message.reply_text(
-            "📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\nማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።\n\n📌 Admin ወይም Super Admin ብቻ ያየዋል።",
-            reply_markup=main_menu(user_id)
-        )
+        await update.message.reply_text("📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\nማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።", reply_markup=main_menu(user_id))
         context.user_data["sending_admin_message"] = True
         return
 
-    received = []
-    for i, req in enumerate(connection_requests):
-        if req["status"] not in ["deleted"]:
-            received.append((i, req))
-
+    received = [(i, req) for i, req in enumerate(connection_requests) if req["status"] != "deleted"]
     if not received:
         await update.message.reply_text("🤝 እስካሁን የግንኙነት ጥያቄ የለም።", reply_markup=main_menu(user_id))
         return
@@ -1966,611 +1348,29 @@ async def show_connection_requests(update, context):
     for i, req in received:
         if req.get("type") == "truck":
             truck = truck_posts[req["truck_index"]]
-            truck_owner_name = users.get(req["truck_owner_id"], {}).get("name", "N/A")
-            truck_owner_username = users.get(req["truck_owner_id"], {}).get("username", "")
-            truck_owner_phone = truck.get("phone", "N/A")
-            truck_poster = "🏷️ Broker" if truck.get("poster_type") == "broker" else "🏷️ Customer"
-
-            text = (
-                f"📥 **ጥያቄ #{i + 1}**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🚛 **የመኪና ባለቤት:** {truck_poster}\n"
-                f"   • ስም: {truck_owner_name}\n"
-                f"   • Username: @{truck_owner_username or 'የለም'}\n"
-                f"   • ስልክ: {truck_owner_phone}\n"
-                f"   • አይነት: {truck['type']}\n"
-                f"   • አቅም: {truck['capacity']}\n"
-                f"   • ታርጋ: {truck.get('plate', 'N/A')}\n"
-                f"   • መንገድ: {truck.get('route', 'N/A')}\n"
-                f"   • ሹፌር: {truck.get('driver', 'N/A')}\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 **የጭነት ፈላጊ ደንበኛ:**\n"
-                f"   • ስም: {req.get('requester_name', 'N/A')}\n"
-                f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
-                f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-                f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
-                f"📌 ሁኔታ: {req['status']}"
-            )
+            text = (f"📥 **ጥያቄ #{i + 1}**\n🚛 **የመኪና ባለቤት:** {users.get(req['truck_owner_id'], {}).get('name', 'N/A')}\n"
+                    f"   • ስልክ: {truck.get('phone', 'N/A')}\n   • አይነት: {truck['type']}\n   • ታርጋ: {truck.get('plate', 'N/A')}\n\n"
+                    f"👤 **የጭነት ፈላጊ:** {req.get('requester_name', 'N/A')}\n   • ስልክ: {req.get('requester_phone', 'N/A')}\n   • ሁኔታ: {req['status']}")
         else:
             cargo = cargo_posts[req["cargo_index"]]
-            cargo_owner_name = users.get(req["cargo_owner_id"], {}).get("name", "N/A")
-            cargo_owner_username = users.get(req["cargo_owner_id"], {}).get("username", "")
-            cargo_owner_phone = cargo.get("phone", "N/A")
-            cargo_poster = "🏷️ Broker" if cargo.get("poster_type") == "broker" else "🏷️ Customer"
+            text = (f"📥 **ጥያቄ #{i + 1}**\n📦 **የጭነት ባለቤት:** {users.get(req['cargo_owner_id'], {}).get('name', 'N/A')}\n"
+                    f"   • ስልክ: {cargo.get('phone', 'N/A')}\n   • መነሻ: {cargo['from']}\n   • መድረሻ: {cargo['to']}\n\n"
+                    f"👤 **የመኪና ፈላጊ:** {req.get('requester_name', 'N/A')}\n   • ስልክ: {req.get('requester_phone', 'N/A')}\n   • ሁኔታ: {req['status']}")
 
-            text = (
-                f"📥 **ጥያቄ #{i + 1}**\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"📦 **የጭነት ባለቤት:** {cargo_poster}\n"
-                f"   • ስም: {cargo_owner_name}\n"
-                f"   • Username: @{cargo_owner_username or 'የለም'}\n"
-                f"   • ስልክ: {cargo_owner_phone}\n"
-                f"   • መነሻ: {cargo['from']}\n"
-                f"   • መድረሻ: {cargo['to']}\n"
-                f"   • አይነት: {cargo['type']}\n"
-                f"   • ክብደት: {cargo['weight']}\n"
-                f"   • ዋጋ: {cargo.get('price_display', 'N/A')}\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 **የመኪና ፈላጊ ደንበኛ:**\n"
-                f"   • ስም: {req.get('requester_name', 'N/A')}\n"
-                f"   • Username: @{req.get('requester_username', '') or 'የለም'}\n"
-                f"   • ስልክ: {req.get('requester_phone', 'N/A')}\n"
-                f"   • አድራሻ: {req.get('requester_address', 'N/A')}\n\n"
-                f"📌 ሁኔታ: {req['status']}"
-            )
-
-        buttons = [[
-            InlineKeyboardButton("✅ Right", callback_data=f"adminright_{i}"),
-            InlineKeyboardButton("❌ X አጥፋ", callback_data=f"adminxdelete_{i}"),
-        ]]
-        if is_super_admin(user_id):
-            buttons.append([
-                InlineKeyboardButton(f"🗑️ ሙሉ በሙሉ አጥፋ #{i + 1} (Super)", callback_data=f"admindeleteconnection_{i}")
-            ])
-
+        buttons = [[InlineKeyboardButton("✅ Right", callback_data=f"adminright_{i}"), InlineKeyboardButton("❌ X አጥፋ", callback_data=f"adminxdelete_{i}")]]
+        if is_super_admin(user_id): buttons.append([InlineKeyboardButton(f"🗑️ ሙሉ በሙሉ አጥፋ #{i + 1}", callback_data=f"admindeleteconnection_{i}")])
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
-
-# ==================================================
-# ADMIN DELETE CONNECTION
-# ==================================================
 
 async def admin_delete_connection(update, context):
     query = update.callback_query
     await query.answer()
-
-    if not is_super_admin(update.effective_user.id):
-        await query.answer("❌ Super Admin ብቻ!", show_alert=True)
-        return
-
+    if not is_super_admin(update.effective_user.id): return
     index = int(query.data.split("_")[-1])
-    if index < 0 or index >= len(connection_requests):
-        return
-
-    connection_requests[index]["status"] = "deleted"
+    if 0 <= index < len(connection_requests): connection_requests[index]["status"] = "deleted"
     await query.edit_message_text("✅ ተሰርዟል።")
 
 # ==================================================
-# HANDLE USER MESSAGE TO ADMINS
-# ==================================================
-
-async def handle_user_message(update, context):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-    username = update.effective_user.username or "የለም"
-    name = update.effective_user.full_name
-
-    for admin_id in get_admin_ids():
-        try:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=(
-                    "📨 **TANA CARGO — አዲስ መልዕክት**\n\n"
-                    f"👤 ስም፦ {name}\n"
-                    f"🔗 Username፦ @{username}\n"
-                    f"🆔 Telegram ID፦ {user_id}\n\n"
-                    f"💬 **መልዕክት፦**\n{text}"
-                )
-            )
-        except Exception:
-            pass
-
-    await update.message.reply_text(
-        "✅ መልዕክትዎ ለ Admin/Super Admin ተልኳል።\n\n📸 ፎቶም መላክ ይችላሉ!",
-        reply_markup=main_menu(user_id)
-    )
-
-# ==================================================
-# HANDLE USER PHOTO TO ADMINS
-# ==================================================
-
-async def handle_user_photo(update, context):
-    user_id = update.effective_user.id
-    username = update.effective_user.username or "የለም"
-    name = update.effective_user.full_name
-    caption = update.message.caption or ""
-
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-        file_type = "photo"
-    elif update.message.document:
-        file_id = update.message.document.file_id
-        file_type = "document"
-    else:
-        return
-
-    for admin_id in get_admin_ids():
-        try:
-            text = (
-                "📸 **TANA CARGO — አዲስ ፎቶ/ስክሪንሾት**\n\n"
-                f"👤 ስም፦ {name}\n"
-                f"🔗 Username፦ @{username}\n"
-                f"🆔 Telegram ID፦ {user_id}\n"
-            )
-            if caption:
-                text += f"\n💬 **ጽሑፍ፦**\n{caption}"
-
-            if file_type == "photo":
-                await context.bot.send_photo(chat_id=admin_id, photo=file_id, caption=text)
-            else:
-                await context.bot.send_document(chat_id=admin_id, document=file_id, caption=text)
-        except Exception:
-            pass
-
-    await update.message.reply_text(
-        "✅ ፎቶ/ስክሪንሾትዎ ለ Admin/Super Admin ተልኳል።\n\n📌 ሌላ መልዕክት ወይም ፎቶ መላክ ይችላሉ።",
-        reply_markup=main_menu(user_id)
-    )
-
-# ==================================================
-# ADMIN MESSAGE MODE STARTER
-# ==================================================
-
-async def _start_admin_message_mode(update, context):
-    user_id = update.effective_user.id
-    await update.message.reply_text(
-        "📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\nማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።\n\n📌 Admin ወይም Super Admin ብቻ ያየዋል።",
-        reply_markup=main_menu(user_id)
-    )
-    context.user_data["sending_admin_message"] = True
-
-# ==================================================
-# OWNER REGISTRATION
-# ==================================================
-
-async def owner_start(update, context):
-    context.user_data.pop("cargo", None)
-    context.user_data.pop("truck", None)
-    context.user_data.pop("broker", None)
-    context.user_data.pop("connect_info", None)
-    context.user_data["owner"] = {}
-    await update.message.reply_text("📦 የጭነት ባለቤት ምዝገባ\n\n1️⃣ ስምዎን ይጻፉ።")
-    return OWNER_NAME
-
-async def owner_name(update, context):
-    context.user_data["owner"]["name"] = update.message.text.strip()
-    await update.message.reply_text(
-        "2️⃣ ስልክ ቁጥርዎን ይጻፉ።\nበ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\nምሳሌ፦ 0912345678"
-    )
-    return OWNER_PHONE
-
-async def owner_phone(update, context):
-    phone = update.message.text.strip().split("\n")[0].strip()
-    is_valid, error = validate_phone(phone)
-    if not is_valid:
-        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-        return OWNER_PHONE
-
-    owner = context.user_data["owner"]
-    owner["phone"] = phone
-    owner["user_id"] = update.effective_user.id
-
-    user = update.effective_user
-    users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})
-    users[user.id]["owner"] = owner.copy()
-
-    try:
-        db_save_user(user.id, user.full_name, user.username or "", owner_name=owner["name"], owner_phone=owner["phone"])
-    except Exception as e:
-        print(f"DB SAVE OWNER ERROR: {e}")
-
-    await update.message.reply_text(
-        f"✅ ምዝገባዎ ተጠናቋል!\n\n👤 {owner['name']}\n📞 {owner['phone']}",
-        reply_markup=main_menu(user.id)
-    )
-    return ConversationHandler.END
-
-# ==================================================
-# GET NEGOTIATION INDEX
-# ==================================================
-
-def get_negotiation_index(user_id):
-    user = users.get(user_id, {})
-    saved = user.get("negotiation_request")
-    if saved is not None and 0 <= saved < len(connection_requests):
-        req = connection_requests[saved]
-        if (req["status"] == "negotiating"
-            and (req["requester_id"] == user_id or other_party_id(req) == user_id)):
-            return saved
-    for i in range(len(connection_requests) - 1, -1, -1):
-        req = connection_requests[i]
-        if (req["status"] == "negotiating"
-            and (req["requester_id"] == user_id or other_party_id(req) == user_id)):
-            return i
-    return None
-
-# ==================================================
-# SUBMIT PRICE
-# ==================================================
-
-async def submit_price(update, context):
-    user_id = update.effective_user.id
-    active_index = get_negotiation_index(user_id)
-    if active_index is None:
-        return
-
-    req = connection_requests[active_index]
-    text = update.message.text.strip().split("\n")[0].strip()
-
-    if text in ["በስምምነት", "በድርድር", "ድርድር", "ስምምነት"]:
-        price = None
-        price_display = "በስምምነት"
-    else:
-        try:
-            price = float(text.replace(",", "").replace("ብር", "").strip())
-            price_display = f"{price:,.2f} ብር"
-        except ValueError:
-            await update.message.reply_text("❌ የዋጋውን ቁጥር ወይም 'በስምምነት' ብለው ይጻፉ።\nምሳሌ፦ 55000 ወይም በስምምነት")
-            return
-        if price <= 0:
-            await update.message.reply_text("❌ ዋጋው ከ0 በላይ መሆን አለበት።")
-            return
-
-    req["offer_version"] = req.get("offer_version", 0) + 1
-    version = req["offer_version"]
-    req["requester_confirmed"] = False
-    req["other_confirmed"] = False
-    req["final_price"] = None
-    req["offers"].append({"user_id": user_id, "price": price, "display": price_display, "version": version})
-    req["current_offer"] = price
-    req["current_offer_by"] = user_id
-    req["status"] = "negotiating"
-
-    await update.message.reply_text(f"💰 የላኩት ዋጋ፦ {price_display}\n\n⏳ የሌላኛውን ወገን ምላሽ ይጠብቁ።")
-
-    buttons = [
-        [InlineKeyboardButton(f"✅ ተስማማለሁ {price_display}", callback_data=f"agreeprice_{active_index}_{version}")],
-        [InlineKeyboardButton("❌ አልስማማሁም", callback_data=f"rejectprice_{active_index}_{version}")],
-    ]
-
-    other_user = other_party_id(req)
-    try:
-        await context.bot.send_message(
-            chat_id=other_user,
-            text=f"💰 አዲስ የዋጋ ጥያቄ መጥቷል።\n\n💵 የቀረበው ዋጋ፦ {price_display}\n\nከዚህ ዋጋ ጋር ከተስማሙ ✅ ይጫኑ።\nወይም ❌ አልስማማሁም ይጫኑ።",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
-    except Exception:
-        pass
-
-# ==================================================
-# AGREE PRICE
-# ==================================================
-
-async def agree_price(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    parts = query.data.split("_")
-    if len(parts) != 3:
-        return
-    index = int(parts[1])
-    button_version = int(parts[2])
-    if index < 0 or index >= len(connection_requests):
-        return
-
-    req = connection_requests[index]
-    user_id = update.effective_user.id
-
-    if button_version != req.get("offer_version", 0):
-        await query.answer("⚠️ ይህ የድሮ ዋጋ ነው።", show_alert=True)
-        return
-
-    if req["status"] != "negotiating":
-        await query.answer("⚠️ ይህ ድርድር ንቁ አይደለም።", show_alert=True)
-        return
-
-    if user_id != req["requester_id"] and user_id != other_party_id(req):
-        await query.answer("❌ የእርስዎ ድርድር አይደለም።", show_alert=True)
-        return
-
-    price = req.get("current_offer")
-    price_display = f"{price:,.2f} ብር" if price is not None else "በስምምነት"
-
-    if user_id == req.get("current_offer_by"):
-        await query.answer("⚠️ የራስዎን ዋጋ መቀበል አይችሉም።", show_alert=True)
-        return
-
-    if user_id == req["requester_id"]:
-        if req["requester_confirmed"]:
-            await query.answer("✅ እርስዎ ቀድሞ ተስማምተዋል።", show_alert=True)
-            return
-        req["requester_confirmed"] = True
-    else:
-        if req["other_confirmed"]:
-            await query.answer("✅ እርስዎ ቀድሞ ተስማምተዋል።", show_alert=True)
-            return
-        req["other_confirmed"] = True
-
-    if req["requester_confirmed"] and req["other_confirmed"]:
-        req["final_price"] = price
-        req["status"] = "awaiting_payment"
-
-        for uid in [req["requester_id"], other_party_id(req)]:
-            if uid in users:
-                users[uid].pop("negotiation_request", None)
-                users[uid]["payment_request"] = index
-
-        each_side = price * 0.01 if price is not None else 0
-
-        await query.edit_message_text(
-            "🎉 **Congratulations!** 🎉\n\n✅ ሁለታችሁም ተስማምታችኋል!\n\n"
-            f"💰 የመጨረሻ ዋጋ፦ {price_display}\n\n"
-            f"📌 ከእያንዳንዱ ወገን 1%፦ {each_side:,.2f} ብር\n\n"
-            "💳 አሁን እያንዳንዱ ወገን የራሱን 1% ይከፍላል።\n📸 ደረሰኙን ወደዚህ ቻት ይላኩ።"
-        )
-
-        success_text = (
-            "🎉 **እንኳን ደስ ያላችሁ!** 🎉\n\n🤝 ሁለታችሁም ተስማምታችኋል!\n\n"
-            f"💰 የመጨረሻ ዋጋ፦ {price_display}\n\n"
-            f"📌 የእያንዳንዱ ወገን 1%፦ {each_side:,.2f} ብር\n\n"
-            "💳 ደረሰኙን አሁን ወደዚህ ቻት ይላኩ።\n🔒 ሁለቱም ክፍያዎች Admin ሲያረጋግጥ ሙሉ መረጃ ይከፈታል።"
-        )
-
-        for uid in [req["requester_id"], other_party_id(req)]:
-            try:
-                await context.bot.send_message(chat_id=uid, text=success_text)
-            except Exception:
-                pass
-        return
-
-    other_user = (other_party_id(req) if user_id == req["requester_id"] else req["requester_id"])
-    buttons = [
-        [InlineKeyboardButton(f"✅ እኔም እስማማለሁ {price_display}", callback_data=f"agreeprice_{index}_{req.get('offer_version', 0)}")],
-        [InlineKeyboardButton("❌ አልስማማሁም", callback_data=f"rejectprice_{index}_{req.get('offer_version', 0)}")],
-    ]
-
-    await query.edit_message_text(f"✅ {price_display} ላይ ተስማምተዋል።\n\n⏳ የሌላኛውን ወገን ምላሽ ይጠብቁ።")
-
-    try:
-        await context.bot.send_message(
-            chat_id=other_user,
-            text=f"🤝 የዋጋ ስምምነት ማረጋገጫ\n\n💰 {price_display}\n\nሌላኛው ወገን ተስማምቷል።\nእርስዎም ከተስማሙ ✅ ይጫኑ።",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
-    except Exception:
-        pass
-
-# ==================================================
-# REJECT PRICE
-# ==================================================
-
-async def reject_price_button(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    parts = query.data.split("_")
-    if len(parts) != 3:
-        return
-    index = int(parts[1])
-    button_version = int(parts[2])
-    if index < 0 or index >= len(connection_requests):
-        return
-
-    req = connection_requests[index]
-    if button_version != req.get("offer_version", 0):
-        await query.answer("⚠️ ይህ የድሮ ዋጋ ነው።", show_alert=True)
-        return
-
-    user_id = update.effective_user.id
-    if user_id != req["requester_id"] and user_id != other_party_id(req):
-        return
-
-    req["requester_confirmed"] = False
-    req["other_confirmed"] = False
-    req["final_price"] = None
-
-    await query.edit_message_text("❌ **ድርድራችሁ አልተሳካም**\n\nበድጋሚ መደራደር ይቻላል።\n\n💬 አዲስ ዋጋ ይጻፉ።")
-
-    other_user = (other_party_id(req) if user_id == req["requester_id"] else req["requester_id"])
-    try:
-        await context.bot.send_message(chat_id=other_user, text="❌ ሌላኛው ወገን አልተስማማም።\n\n💬 አዲስ ዋጋ ያቅርቡ።")
-    except Exception:
-        pass
-
-# ==================================================
-# PAYMENT INDEX
-# ==================================================
-
-def get_payment_index(user_id):
-    user = users.get(user_id, {})
-    saved = user.get("payment_request")
-    if saved is not None and 0 <= saved < len(connection_requests):
-        req = connection_requests[saved]
-        if (req["status"] == "awaiting_payment" and (req["requester_id"] == user_id or other_party_id(req) == user_id)):
-            return saved
-    for i in range(len(connection_requests) - 1, -1, -1):
-        req = connection_requests[i]
-        if (req["status"] == "awaiting_payment" and (req["requester_id"] == user_id or other_party_id(req) == user_id)):
-            return i
-    return None
-
-# ==================================================
-# RECEIPT MESSAGE
-# ==================================================
-
-async def receipt_message(update, context):
-    user_id = update.effective_user.id
-    index = get_payment_index(user_id)
-    if index is None:
-        return
-
-    req = connection_requests[index]
-    receipt = update.message.text.strip()
-    side = "requester" if user_id == req["requester_id"] else "other"
-
-    version_key = f"{side}_payment_version"
-    req[version_key] = req.get(version_key, 0) + 1
-    payment_version = req[version_key]
-
-    req[f"{side}_payment_submitted"] = True
-    req[f"{side}_payment_approved"] = False
-    req[f"{side}_payment_rejected"] = False
-    req[f"{side}_receipt"] = receipt
-    req["status"] = "awaiting_payment"
-
-    await update.message.reply_text("🧾 የክፍያ Receipt ተቀብለናል።\n\n⏳ Admin ይመረምራል።")
-
-    await send_admin_payment_request(context, index, side, user_id, receipt_text=receipt, payment_version=payment_version)
-
-async def receipt_photo(update, context):
-    user_id = update.effective_user.id
-
-    if context.user_data.get("sending_admin_message"):
-        return await handle_user_photo(update, context)
-
-    index = get_payment_index(user_id)
-    if index is None:
-        return
-
-    req = connection_requests[index]
-    file_id = update.message.photo[-1].file_id
-    side = "requester" if user_id == req["requester_id"] else "other"
-
-    version_key = f"{side}_payment_version"
-    req[version_key] = req.get(version_key, 0) + 1
-    payment_version = req[version_key]
-
-    req[f"{side}_payment_submitted"] = True
-    req[f"{side}_payment_approved"] = False
-    req[f"{side}_payment_rejected"] = False
-    req[f"{side}_receipt_photo"] = file_id
-    req["status"] = "awaiting_payment"
-
-    await update.message.reply_text("🧾 የክፍያ Screenshot ተቀብለናል።\n\n⏳ Admin ይመረምራል።")
-
-    await send_admin_payment_request(context, index, side, user_id, photo_id=file_id, payment_version=payment_version)
-
-# ==================================================
-# SEND ADMIN PAYMENT REQUEST
-# ==================================================
-
-async def send_admin_payment_request(context, index, side, user_id, receipt_text=None, photo_id=None, payment_version=None):
-    req = connection_requests[index]
-    side_name = "ጠያቂ" if side == "requester" else ("የመኪና ባለቤት" if req.get("type") == "truck" else "የጭነት ባለቤት")
-
-    if payment_version is None:
-        payment_version = req.get(f"{side}_payment_version", 0)
-
-    buttons = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ APPROVE", callback_data=f"adminapprove_{index}_{side}_{payment_version}"),
-        InlineKeyboardButton("❌ REJECT", callback_data=f"adminreject_{index}_{side}_{payment_version}"),
-    ]])
-
-    user_name = users.get(user_id, {}).get("name", "Unknown")
-    price = req.get("final_price") or 0
-
-    text = (
-        "🧾 TANA CARGO — የክፍያ ማስረጃ\n\n"
-        f"📌 Request ID፦ {index}\n"
-        f"👤 ተጠቃሚ፦ {user_name}\n"
-        f"🆔 Telegram ID፦ {user_id}\n"
-        f"👥 ወገን፦ {side_name}\n"
-        f"💰 Final Price፦ {price:,.2f} ብር\n\n"
-    )
-    if receipt_text:
-        text += f"🧾 Receipt፦\n{receipt_text}\n"
-    if photo_id:
-        text += "🖼️ Screenshot ከታች ተልኳል።\n"
-    text += "\nእባክዎ ክፍያውን ይመርምሩ።"
-
-    for admin_id in get_admin_ids():
-        try:
-            if photo_id:
-                await context.bot.send_photo(chat_id=admin_id, photo=photo_id, caption=text, reply_markup=buttons)
-            else:
-                await context.bot.send_message(chat_id=admin_id, text=text, reply_markup=buttons)
-        except Exception:
-            pass
-
-# ==================================================
-# ADMIN PAYMENT ACTION
-# ==================================================
-
-async def admin_payment_action(update, context):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_admin(update.effective_user.id):
-        await query.answer("❌ Admin ብቻ።", show_alert=True)
-        return
-
-    parts = query.data.split("_")
-    if len(parts) != 4:
-        return
-
-    action, index, side, button_version = (parts[0], int(parts[1]), parts[2], int(parts[3]))
-    if index < 0 or index >= len(connection_requests):
-        return
-
-    req = connection_requests[index]
-    if side not in ["requester", "other"]:
-        return
-
-    if button_version != req.get(f"{side}_payment_version", 0):
-        await query.answer("⚠️ ይህ የድሮ ማስረጃ ነው።", show_alert=True)
-        return
-
-    if not req.get(f"{side}_payment_submitted"):
-        await query.answer("⚠️ ማስረጃ አልተላከም።", show_alert=True)
-        return
-
-    user_to_notify = (req["requester_id"] if side == "requester" else other_party_id(req))
-
-    if action == "adminapprove":
-        req[f"{side}_payment_approved"] = True
-        req[f"{side}_payment_rejected"] = False
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
-        if (req.get("requester_payment_approved") and req.get("other_payment_approved")):
-            await share_full_information(index, context)
-        else:
-            try:
-                await context.bot.send_message(chat_id=user_to_notify, text="✅ ክፍያዎ ተረጋግጧል።\n\n⏳ የሁለተኛው ወገን ማረጋገጫ ይጠበቃል።")
-            except Exception:
-                pass
-
-    elif action == "adminreject":
-        req[f"{side}_payment_approved"] = False
-        req[f"{side}_payment_rejected"] = True
-        req[f"{side}_payment_submitted"] = False
-        req.pop(f"{side}_receipt", None)
-        req.pop(f"{side}_receipt_photo", None)
-
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
-
-        try:
-            await context.bot.send_message(chat_id=user_to_notify, text="❌ ክፍያዎ አልተፈቀደም።\n\nእባክዎ እንደገና ይላኩ።")
-        except Exception:
-            pass
-
-# ==================================================
-# TANA CARGO TRACKING (NEW FLOW)
+# TRACKING FLOW (LIVE TRACCAR INTEGRATION)
 # ==================================================
 
 async def tracking_menu(update, context):
@@ -2583,9 +1383,9 @@ async def tracking_menu(update, context):
         [InlineKeyboardButton("🛑 ክትትል ማስቆም (ሹፌር)", callback_data="tracking_stop")],
     ])
     await update.effective_message.reply_text(
-        "📍 **TANA CARGO — የጭነት ክትትል**\n\n"
+        "📍 **TANA CARGO — የጭነት ክትትል (LIVE)**\n\n"
         "🚛 ሹፌር፦ አዲስ አድራሻ መላክ ወይም ክትትል ማስቆም ይችላሉ።\n"
-        "📦 ደንበኛ፦ የመጨረሻ አድራሻዎን ይመልከቱ።",
+        "📦 ደንበኛ፦ የመጨረሻ አድራሻዎን ይመልከቱ (ማስፈንጠሪያ አለው)።",
         reply_markup=keyboard
     )
 
@@ -2608,14 +1408,7 @@ async def tracking_send_phone(update, context):
         await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
         return TRACK_SEND_PHONE
     context.user_data["track_send"]["phone"] = phone
-    await update.message.reply_text(
-        "3️⃣ **የአሁኑን ቦታዎን** ይላኩ።\n\nከታች ያለውን ቁልፍ ተጭነው GPS ይላኩ።",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("📍 የአሁኑን ቦታ ላክ", request_location=True)],
-             [KeyboardButton("❌ ሰርዝ")]],
-            resize_keyboard=True, one_time_keyboard=True
-        )
-    )
+    await update.message.reply_text("3️⃣ **የአሁኑን ቦታዎን** ይላኩ።\n\nከታች ያለውን ቁልፍ ተጭነው GPS ይላኩ።", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("📍 የአሁኑን ቦታ ላክ", request_location=True)], [KeyboardButton("❌ ሰርዝ")]], resize_keyboard=True, one_time_keyboard=True))
     return TRACK_SEND_LOCATION
 
 async def tracking_send_location(update, context):
@@ -2625,11 +1418,8 @@ async def tracking_send_location(update, context):
 
     loc = update.message.location
     req = context.user_data.get("track_send", {})
-    customer_name = req.get("name")
-    customer_phone = req.get("phone")
-    driver_id = update.effective_user.id
-    driver_name = update.effective_user.full_name
-    
+    customer_name, customer_phone = req.get("name"), req.get("phone")
+    driver_id, driver_name = update.effective_user.id, update.effective_user.full_name
     map_url = f"https://maps.google.com/?q={loc.latitude},{loc.longitude}"
     
     customer_user_id = None
@@ -2649,11 +1439,7 @@ async def tracking_send_location(update, context):
                 status, latitude, longitude, location_updated_at, created_at,
                 customer_name, customer_phone
             ) VALUES (?, 'cargo', ?, ?, '', '', '', '', 'in_transit', ?, ?, ?, ?, ?, ?)
-        """, (
-            code, driver_id, customer_user_id or 0,
-            loc.latitude, loc.longitude, datetime.now().astimezone().isoformat(),
-            datetime.now().astimezone().isoformat(), customer_name, customer_phone
-        ))
+        """, (code, driver_id, customer_user_id or 0, loc.latitude, loc.longitude, datetime.now().astimezone().isoformat(), datetime.now().astimezone().isoformat(), customer_name, customer_phone))
         conn.commit()
     finally:
         conn.close()
@@ -2662,25 +1448,19 @@ async def tracking_send_location(update, context):
         try:
             await context.bot.send_message(
                 chat_id=customer_user_id,
-                text=f"📍 **TANA CARGO — አዲስ አድራሻ**\n\n"
-                     f"ሹፌሩ ({driver_name}) የመኪናውን ቦታ ልኮልዎታል።\n\n"
-                     f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n"
-                     f"💡 አድራሻውን በቦቱ ውስጥ ለማየት '📍 የጭነት ክትትል' -> '📦 የመጨረሻ አድራሻዬን ተመልከት' የሚለውን ይጫኑ።"
+                text=f"📍 **TANA CARGO — አዲስ አድራሻ**\n\nሹፌሩ ({driver_name}) የመኪናውን ቦታ ልኮልዎታል።\n\n🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n💡 አድራሻውን በቦቱ ውስጥ ለማየት '📍 የጭነት ክትትል' -> '📦 የመጨረሻ አድራሻዬን ተመልከት' የሚለውን ይጫኑ።"
             )
             success_msg = f"✅ አድራሻው በቴሌግራም አካውንቱ ለ **{customer_name}** ({customer_phone}) ተልኳል።\n\n⚠️ እባክዎ የላኩለት ሰው on line ካልሆነ ደውለው ይንገሩት።"
         except Exception:
             success_msg = f"⚠️ ለ **{customer_name}** ({customer_phone}) መልዕክት መላክ አልተቻለም። እባክዎ ደውለው ያሳውቁት።"
     else:
-        success_msg = (
-            f"✅ አድራሻው ተመዝግቧል!\n\n"
-            f"⚠️ ግን የላኩለት ሰው ({customer_name} - {customer_phone}) በቦቱ ላይ አልተመዘገበም።\n"
-            f"እባክዎ ደውለው ይንገሩት ወይም ይህንን ሊንክ ይላኩለት፦\n{map_url}"
-        )
+        success_msg = f"✅ አድራሻው ተመዝግቧል!\n\n⚠️ ግን የላኩለት ሰው ({customer_name} - {customer_phone}) በቦቱ ላይ አልተመዘገበም።\nእባክዎ ደውለው ይንገሩት ወይም ይህንን ሊንክ ይላኩለት፦\n{map_url}"
 
     await update.message.reply_text(success_msg, reply_markup=ReplyKeyboardRemove())
     context.user_data.pop("track_send", None)
     return ConversationHandler.END
 
+# --- የTraccar Live ማሳያ (Refresh ያለው) ---
 async def tracking_get_loc_callback(update, context):
     query = update.callback_query
     await query.answer()
@@ -2699,21 +1479,44 @@ async def tracking_get_loc_callback(update, context):
 
     if row:
         record = dict(row)
-        lat = record["latitude"]
-        lon = record["longitude"]
+        code = record["tracking_code"]
+        
+        # Traccar API ከሆነ የቅርብ ጊዜውን ቦታ መሳብ
+        traccar_loc = get_traccar_location(TRACCAR_DEVICE_ID)
+        
+        if traccar_loc and traccar_loc.get("latitude"):
+            lat = float(traccar_loc["latitude"])
+            lon = float(traccar_loc["longitude"])
+            address = traccar_loc.get("address")
+            time = traccar_loc.get("timestamp")
+        elif record.get("latitude") is not None:
+            lat = float(record["latitude"])
+            lon = float(record["longitude"])
+            address = "የተላከ የመጀመሪያ ቦታ"
+            time = record.get("location_updated_at")[:16] if record.get("location_updated_at") else "N/A"
+        else:
+            await query.message.reply_text("❌ አሁንም አዲስ የGoogle Map መረጃ አልተላከልም።\n\nእባክዎ አድራሻ እንዲልክልዎ የፈለጉትን ሰው ደውለው 'አድራሻህን ላክልኝ' ይበሉት።")
+            return
+
         map_url = f"https://maps.google.com/?q={lat},{lon}"
         msg = (
-            f"📦 **TANA CARGO — የመጨረሻ አድራሻ**\n\n"
+            f"📦 **TANA CARGO — የቀጥታ አድራሻ (LIVE)**\n\n"
+            f"🔑 ኮድ፦ `{code}`\n"
             f"👤 ሹፌር፦ {record.get('driver_description') or 'N/A'}\n"
-            f"🕒 የተላከበት ሰዓት፦ {record.get('location_updated_at')[:16]}\n\n"
-            f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})"
+            f"📍 **የቅርብ ጊዜ ቦታ፦** {address}\n"
+            f"🕒 **የተላከበት ሰዓት፦** {time}\n\n"
+            f"🗺️ [በGoogle Maps ላይ ለማየት እዚህ ይጫኑ]({map_url})"
         )
-        await query.message.reply_text(msg, disable_web_page_preview=True)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔄 አድስ (Refresh Map)", callback_data="refresh_map")
+        ]])
+        await query.message.reply_text(msg, reply_markup=kb, disable_web_page_preview=True)
     else:
-        await query.message.reply_text(
-            "❌ ይቅርታ! ምንም አይነት የGoogle Map መረጃ አልተላከልዎትም።\n\n"
-            "እባክዎ አድራሻ እንዲልክልዎ የፈለጉትን ሰው ደውለው 'አድራሻህን ላክልኝ' ይበሉት።"
-        )
+        await query.message.reply_text("❌ ይቅርታ! ምንም አይነት የGoogle Map መረጃ አልተላከልዎትም።\n\nእባክዎ አድራሻ እንዲልክልዎ የፈለጉትን ሰው ደውለው 'አድራሻህን ላክልኝ' ይበሉት።")
+
+async def refresh_map_callback(update, context):
+    # አድሳት ሲጫኑ እንደገና የቅርብ ጊዜውን ያመጣል
+    await tracking_get_loc_callback(update, context)
 
 async def tracking_stop_start(update, context):
     query = update.callback_query
@@ -2736,14 +1539,9 @@ async def tracking_stop_phone(update, context):
     context.user_data["stop_track"]["phone"] = phone
     
     name = context.user_data["stop_track"]["name"]
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Right (አረጋግጥ)", callback_data="stop_track_confirm")
-    ]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Right (አረጋግጥ)", callback_data="stop_track_confirm")]])
     await update.message.reply_text(
-        f"📝 **ማረጋገጫ**\n\n"
-        f"👤 ስም፦ {name}\n"
-        f"📞 ስልክ፦ {phone}\n\n"
-        f"ክትትል ማቆምዎን ለማረጋገጥ ✅ Right ይጫኑ።",
+        f"📝 **ማረጋገጫ**\n\n👤 ስም፦ {name}\n📞 ስልክ፦ {phone}\n\nክትትል ማቆምዎን ለማረጋገጥ ✅ Right ይጫኑ።",
         reply_markup=kb
     )
     return STOP_TRACK_CONFIRM
@@ -2753,8 +1551,7 @@ async def tracking_stop_confirm(update, context):
     await query.answer()
     
     req = context.user_data.get("stop_track", {})
-    name = req.get("name")
-    phone = req.get("phone")
+    name, phone = req.get("name"), req.get("phone")
     driver_id = update.effective_user.id
     
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -2782,26 +1579,18 @@ async def tracking_stop_confirm(update, context):
     finally:
         conn.close()
 
-    await query.edit_message_text(
-        f"✅ **ክትትል በማቋረጥ ተጠናቋል!**\n\n"
-        f"ለ **{name}** ({phone}) የነበረው ክትትል ተዘግቷል።"
-    )
+    await query.edit_message_text(f"✅ **ክትትል በማቋረጥ ተጠናቋል!**\n\nለ **{name}** ({phone}) የነበረው ክትትል ተዘግቷል።")
 
     if customer_user_id and customer_user_id != 0:
         try:
-            await context.bot.send_message(
-                chat_id=customer_user_id,
-                text=f"🛑 **TANA CARGO**\n\nሹፌሩ ({name}) የጭነቱን ክትትል አቁሟል።\nጉዞዎ በደህና ይጠናቀቅ!"
-            )
-        except Exception:
-            pass
+            await context.bot.send_message(chat_id=customer_user_id, text=f"🛑 **TANA CARGO**\n\nሹፌሩ ({name}) የጭነቱን ክትትል አቁሟል።\nጉዞዎ በደህና ይጠናቀቅ!")
+        except Exception: pass
 
     context.user_data.pop("stop_track", None)
     return ConversationHandler.END
 
 async def tracking_text_handler(update, context):
-    if not update.effective_user or not update.message or not update.message.text:
-        return
+    if not update.effective_user or not update.message or not update.message.text: return
     text = update.message.text.strip()
     
     if text == "❌ ሰርዝ":
@@ -2813,640 +1602,102 @@ async def tracking_text_handler(update, context):
             context.user_data.pop("stop_track", None)
             await update.message.reply_text("ሂደቱ ተሰርዟል።", reply_markup=ReplyKeyboardRemove())
             return
-
 # ==================================================
-# SHARE FULL INFORMATION
-# ==================================================
-
-async def share_full_information(index, context):
-    req = connection_requests[index]
-    if req.get("full_info_shared"):
-        return
-    if not (req.get("requester_payment_approved") and req.get("other_payment_approved")):
-        return
-
-    try:
-        tracking_code = db_create_tracking_session(req, index)
-        req["tracking_code"] = tracking_code
-    except Exception as e:
-        tracking_code = None
-        print(f"TRACKING SESSION CREATE ERROR: {e}")
-
-    req["full_info_shared"] = True
-    req["status"] = "completed"
-
-    if req.get("type") == "truck":
-        ti = req.get("truck_index")
-        if isinstance(ti, int) and 0 <= ti < len(truck_posts):
-            truck_posts[ti]["active"] = False
-    else:
-        ci = req.get("cargo_index")
-        if isinstance(ci, int) and 0 <= ci < len(cargo_posts):
-            cargo_posts[ci]["active"] = False
-
-    requester_id = req["requester_id"]
-    owner_id = other_party_id(req)
-    requester_name = req.get("requester_name", "N/A")
-    requester_phone = req.get("requester_phone", "N/A")
-
-    if req.get("type") == "truck":
-        truck = truck_posts[req["truck_index"]]
-        owner_name = users.get(owner_id, {}).get("name", "የመኪና ባለቤት")
-        owner_phone = truck.get("phone", "")
-
-        requester_msg = (
-            "✅ **TANA CARGO — ተጠናቋል!**\n\n🔓 የግል መረጃ ተከፍቷል።\n\n"
-            f"👤 የመኪና ባለቤት፦ {owner_name}\n📞 ስልክ፦ {owner_phone or 'የለም'}\n"
-            f"🚛 መኪና፦ {truck['type']}\n🔢 ታርጋ፦ {truck.get('plate', 'የለም')}\n\n🤝 አሁን በቀጥታ ተገናኙ።"
-        )
-        owner_msg = (
-            "✅ **TANA CARGO — ተጠናቋል!**\n\n🔓 የግል መረጃ ተከፍቷል።\n\n"
-            f"👤 ጠያቂ፦ {requester_name}\n📞 ስልክ፦ {requester_phone}\n\n🤝 አሁን በቀጥታ ተገናኙ።"
-        )
-    else:
-        cargo = cargo_posts[req["cargo_index"]]
-        owner_name = users.get(owner_id, {}).get("name", "የጭነት ባለቤት")
-        owner_phone = cargo.get("phone", "")
-
-        requester_msg = (
-            "✅ **TANA CARGO — ተጠናቋል!**\n\n🔓 የግል መረጃ ተከፍቷል።\n\n"
-            f"👤 የጭነት ባለቤት፦ {owner_name}\n📞 ስልክ፦ {owner_phone or 'የለም'}\n\n"
-            f"📦 {cargo['type']}\n📍 {cargo['from']} ➡️ {cargo['to']}\n\n🤝 አሁን በቀጥታ ተገናኙ።"
-        )
-        owner_msg = (
-            "✅ **TANA CARGO — ተጠናቋል!**\n\n🔓 የግል መረጃ ተከፍቷል።\n\n"
-            f"👤 የመኪና ጠያቂ፦ {requester_name}\n📞 ስልክ፦ {requester_phone}\n\n🤝 አሁን በቀጥታ ተገናኙ።"
-        )
-
-    for uid, msg in [(requester_id, requester_msg), (owner_id, owner_msg)]:
-        if tracking_code:
-            if uid == int(req.get("requester_id", 0)) and req.get("type") == "cargo":
-                msg += (
-                    f"\n\n📍 **የጭነት ክትትል ኮድ፦ {tracking_code}**\n"
-                    "🚛 እርስዎ የመኪናውን ቦታ ለመላክ በTANA CARGO ምናሌ ውስጥ «📍 የጭነት ክትትል» ይጫኑ።"
-                )
-            elif uid == int(req.get("truck_owner_id", -1)) and req.get("type") == "truck":
-                msg += (
-                    f"\n\n📍 **የጭነት ክትትል ኮድ፦ {tracking_code}**\n"
-                    "🚛 እርስዎ የመኪናውን ቦታ ለመላክ በTANA CARGO ምናሌ ውስጥ «📍 የጭነት ክትትል» ይጫኑ።"
-                )
-            else:
-                msg += (
-                    f"\n\n📍 **የጭነት ክትትል ኮድ፦ {tracking_code}**\n"
-                    "የመኪናውን የመጨረሻ የተላከ ቦታ ለማየት በTANA CARGO ምናሌ ውስጥ «📍 የጭነት ክትትል» ይጫኑ።"
-                )
-        try:
-            await context.bot.send_message(chat_id=uid, text=msg)
-        except Exception:
-            pass
-# ==================================================
-# STALE STATE CLEANER
+# STALE STATE CLEANER & TEXT ROUTER
 # ==================================================
 
 def clear_stale_user_state(context, keep=()):
-    for key in ("cargo", "truck", "broker", "owner",
-                "connect_info", "sending_admin_message",
-                "track_send", "stop_track"):
+    for key in ("cargo", "truck", "broker", "owner", "connect_info", "sending_admin_message", "track_send", "stop_track"):
         if key not in keep:
             context.user_data.pop(key, None)
 
-# ==================================================
-# CONNECT FALLBACK ROUTER
-# ==================================================
-
 async def connect_fallback_router(update, context):
     info = context.user_data.get("connect_info")
-    if not info:
-        return
-
+    if not info: return
     text = update.message.text.strip().split("\n")[0].strip()
-    if not text:
-        return
+    if not text: return
 
-    name = (info.get("name") or "").strip()
-    phone = (info.get("phone") or "").strip()
-    address = (info.get("requester_address") or "").strip()
+    name, phone, address = (info.get("name") or "").strip(), (info.get("phone") or "").strip(), (info.get("requester_address") or "").strip()
 
     if not name:
-        info["name"] = text
-        context.user_data["connect_info"] = info
-        await update.message.reply_text("2️⃣ **ስልክ ቁጥርዎን** ይጻፉ።\nበ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\nምሳሌ፦ 0912345678")
+        info["name"] = text; context.user_data["connect_info"] = info
+        await update.message.reply_text("2️⃣ **ስልክ ቁጥርዎን** ይጻፉ።\nበ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።")
         return
-
     if not phone:
         is_valid, error = validate_phone(text)
-        if not is_valid:
-            await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
-            return
-        info["phone"] = text
-        context.user_data["connect_info"] = info
-        await update.message.reply_text("3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።\nምሳሌ፦ አዲስ አበባ / ባህርዳር / ጎንደር")
+        if not is_valid: await update.message.reply_text(f"❌ {error}"); return
+        info["phone"] = text; context.user_data["connect_info"] = info
+        await update.message.reply_text("3️⃣ **የሚገኙበትን አድራሻ** ይጻፉ።")
         return
-
     if not address:
-        await connect_type(update, context)
-        return
-
-# ==================================================
-# TEXT ROUTER
-# ==================================================
+        await connect_type(update, context); return
 
 async def text_router(update, context):
-    if update.effective_user is None:
-        return
+    if update.effective_user is None: return
     user_id = update.effective_user.id
 
     if context.user_data.get("sending_admin_message"):
         return await handle_user_message(update, context)
-
     if context.user_data.get("connect_info"):
         return await connect_fallback_router(update, context)
-
     if get_payment_index(user_id) is not None:
         return await receipt_message(update, context)
-
     if get_negotiation_index(user_id) is not None:
         return await submit_price(update, context)
 
 # ==================================================
-# START / PROFILE / SUPPORT / ABOUT / PAYMENT / CANCEL
+# HANDLE USER MESSAGE/PHOTO TO ADMINS
 # ==================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+async def handle_user_message(update, context):
+    user_id, text, username, name = update.effective_user.id, update.message.text.strip(), update.effective_user.username or "የለም", update.effective_user.full_name
+    for admin_id in get_admin_ids():
+        try: await context.bot.send_message(chat_id=admin_id, text=f"📨 **TANA CARGO — አዲስ መልዕክት**\n\n👤 ስም፦ {name}\n🔗 Username፦ @{username}\n🆔 ID፦ {user_id}\n\n💬 **መልዕክት፦**\n{text}")
+        except Exception: pass
+    await update.message.reply_text("✅ መልዕክትዎ ለ Admin/Super Admin ተልኳል።", reply_markup=main_menu(user_id))
+
+async def handle_user_photo(update, context):
+    user_id, username, name, caption = update.effective_user.id, update.effective_user.username or "የለም", update.effective_user.full_name, update.message.caption or ""
+    file_id = update.message.photo[-1].file_id if update.message.photo else (update.message.document.file_id if update.message.document else None)
+    file_type = "photo" if update.message.photo else "document"
+    if not file_id: return
+
+    for admin_id in get_admin_ids():
+        try:
+            text = f"📸 **TANA CARGO — አዲስ ፎቶ/ስክሪንሾት**\n\n👤 ስም፦ {name}\n🔗 Username፦ @{username}\n🆔 ID፦ {user_id}\n"
+            if caption: text += f"\n💬 **ጽሑፍ፦**\n{caption}"
+            if file_type == "photo": await context.bot.send_photo(chat_id=admin_id, photo=file_id, caption=text)
+            else: await context.bot.send_document(chat_id=admin_id, document=file_id, caption=text)
+        except Exception: pass
+    await update.message.reply_text("✅ ፎቶ/ስክሪንሾትዎ ለ Admin/Super Admin ተልኳል።", reply_markup=main_menu(user_id))
+
+async def _start_admin_message_mode(update, context):
+    await update.message.reply_text("📨 **ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ**\n\nማንኛውም መረጃ ወይም ፎቶ ለማስተላለፍ ይላኩ።", reply_markup=main_menu(update.effective_user.id))
+    context.user_data["sending_admin_message"] = True
+
+# ==================================================
+# OWNER & PAYMENTS (NEGOTIATION & RECEIPTS)
+# ==================================================
+
+async def owner_start(update, context):
+    context.user_data.clear(); context.user_data["owner"] = {}
+    await update.message.reply_text("📦 የጭነት ባለቤት ምዝገባ\n\n1️⃣ ስምዎን ይጻፉ።")
+    return OWNER_NAME
+
+async def owner_name(update, context):
+    context.user_data["owner"]["name"] = update.message.text.strip()
+    await update.message.reply_text("2️⃣ ስልክ ቁጥርዎን ይጻፉ።")
+    return OWNER_PHONE
+
+async def owner_phone(update, context):
+    phone = update.message.text.strip().split("\n")[0].strip()
+    is_valid, error = validate_phone(phone)
+    if not is_valid: await update.message.reply_text(f"❌ {error}"); return OWNER_PHONE
+
+    owner = context.user_data["owner"]; owner["phone"] = phone; owner["user_id"] = update.effective_user.id
     user = update.effective_user
-    users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})
-    try:
-        db_save_user(user.id, user.full_name, user.username or "")
-    except Exception as e:
-        print(f"DB SAVE USER ERROR: {e}")
+    users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})["owner"] = owner.copy()
+    try: db_save_user(user.id, user.full_name, user.username or "", owner_name=owner["name"], owner_phone=owner["phone"])
+    except Exception as e: print(f"DB ERR: {e}")
 
-    await update.message.reply_text(
-        "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
-        "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
-        "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።\n\n"
-        "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
-        reply_markup=main_menu(user.id)
-    )
-
-async def profile(update, context):
-    user_id = update.effective_user.id
-    user = users.get(user_id, {"name": update.effective_user.full_name, "username": update.effective_user.username or "", "id": user_id})
-
-    message = (
-        "👤 **የኔ መረጃ**\n\n"
-        f"👤 ስም፦ {user['name']}\n🔗 Username፦ @{user['username'] or 'የለም'}\n🆔 Telegram ID፦ {user['id']}\n"
-    )
-
-    if "owner" in user:
-        owner = user["owner"]
-        message += f"\n📦 የጭነት ባለቤት ምዝገባ፦ ✅\n👤 {owner.get('name', 'N/A')}\n📞 {owner.get('phone', 'N/A')}\n"
-
-    if is_broker(user_id):
-        message += "\n🏷️ የጭነት ደላላ: ✅ ጸድቋል\n"
-
-    my_cargo = [c for c in cargo_posts if c["user_id"] == user_id]
-    my_trucks = [t for t in truck_posts if t["user_id"] == user_id]
-
-    message += f"\n🚚 የለጠፉት ጭነት፦ {len(my_cargo)}\n🚛 የተመዘገቡ መኪኖች፦ {len(my_trucks)}"
-
-    await update.message.reply_text(message, reply_markup=main_menu(user_id))
-
-async def support_start(update, context):
-    await update.message.reply_text(
-        "📞 TANA CARGO የጣና ጭነት እገዛ\n\nለእገዛ ለማግኘት @tanapage ይጠቀሙ።\n\n"
-        f"☎️ {SUPPORT_PHONE}\n☎️ {SUPPORT_PHONE_2}\n\n🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።",
-        reply_markup=main_menu(update.effective_user.id)
-    )
-    return ConversationHandler.END
-
-async def about(update, context):
-    await update.message.reply_text(
-        "🚚 **TANA CARGO | ጣና ጭነት**\n\n"
-        "የጭነት ባለቤቶችንና የጭነት መኪና ባለቤቶችን ለማገናኘት፣ የጭነት ማጓጓዣ ሂደትን "
-        "ለማቀላጠፍ እና ቀላልና የተደራጀ አገልግሎት ለመስጠት የተዘጋጀ የጭነት ማገናኛ አገልግሎት ነው።\n\n"
-        "🤝 ጭነት ያለዎት? ከተመዘገቡ የጭነት መኪናዎች ጋር ይገናኙ።\n\n"
-        "🚛 የጭነት መኪና አለዎት? የሚፈልጉትን ጭነት ይፈልጉ።\n\n"
-        "❤️ TANA CARGO — ጭነትንና መኪናን እናገናኛለን።\n\n🙏 እኛን ስለመረጡ እናመሰግናለን።",
-        reply_markup=main_menu(update.effective_user.id)
-    )
-
-async def service_payment(update, context):
-    await update.message.reply_text(payment_methods_text(), reply_markup=main_menu(update.effective_user.id))
-    return ConversationHandler.END
-
-async def cancel(update, context):
-    context.user_data.clear()
-    await update.message.reply_text("❌ ሂደቱ ተሰርዟል።", reply_markup=main_menu(update.effective_user.id))
-    return ConversationHandler.END
-
-# ==================================================
-# ERROR HANDLER / HEALTH SERVER / EXPIRY CLEANER
-# ==================================================
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    print(f"TANA CARGO ERROR: {context.error}")
-    try:
-        print(f"ERROR UPDATE: {update}")
-    except Exception:
-        pass
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"TANA CARGO is running")
-
-    def log_message(self, format, *args):
-        return
-
-def start_health_server():
-    port = int(os.getenv("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    print(f"✅ TANA CARGO health server listening on port {port}")
-    return server
-
-async def clean_expired_posts(context):
-    now = datetime.now()
-    expired_cargos = []
-    expired_trucks = []
-
-    for i, cargo in enumerate(cargo_posts):
-        if not cargo.get("active", True):
-            continue
-        ed = cargo.get("expiry_date")
-        if ed:
-            try:
-                if now >= datetime.fromisoformat(ed):
-                    expired_cargos.append(i)
-            except Exception:
-                pass
-
-    for i, truck in enumerate(truck_posts):
-        if not truck.get("active", True):
-            continue
-        ed = truck.get("expiry_date")
-        if ed:
-            try:
-                if now >= datetime.fromisoformat(ed):
-                    expired_trucks.append(i)
-            except Exception:
-                pass
-
-    for i in expired_cargos:
-        cargo_posts[i]["active"] = False
-        try:
-            await context.bot.send_message(chat_id=cargo_posts[i]["user_id"], text=f"⏰ **የጭነት ጊዜ ገደብ**\n\n📍 {cargo_posts[i]['from']} ➡️ {cargo_posts[i]['to']}\n📦 {cargo_posts[i]['type']}\n\n72 ሰዓት ስለሞላ ተወግዷል።")
-        except Exception:
-            pass
-
-    for i in expired_trucks:
-        truck_posts[i]["active"] = False
-        try:
-            await context.bot.send_message(chat_id=truck_posts[i]["user_id"], text=f"⏰ **የመኪና ጊዜ ገደብ**\n\n🚛 {truck_posts[i]['type']}\n\n72 ሰዓት ስለሞላ ተወግዷል።")
-        except Exception:
-            pass
-
-# ==================================================
-# MENU ROUTER & INTERRUPT
-# ==================================================
-
-MASTER_MENU_REGEX = (
-    r"^(🚚 ጭነት መለጠፍ|🔎 ጭነት መፈለግ|🚛 የጭነት መኪና ማስመዝገብ|🚛 የጭነት መኪና መፈለግ|"
-    r"👤 የኔ መረጃ|📍 የጭነት ክትትል|🤝 የግንኙነት ጥያቄዎች|📋 የጭነት ደላሎች መዝገብ|"
-    r"🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ|📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ|"
-    r"💳 የአገልግሎት ክፍያ ለመፈፀም|📞 Support|ℹ️ About)$"
-)
-
-async def menu_router(update, context):
-    text = update.message.text
-    uid = update.effective_user.id
-
-    context.user_data["subscribed"] = True
-    clear_stale_user_state(context)
-
-    if text == "🚚 ጭነት መለጠፍ":
-        return await cargo_start(update, context)
-    if text == "🔎 ጭነት መፈለግ":
-        await find_cargo(update, context)
-        return ConversationHandler.END
-    if text == "🚛 የጭነት መኪና ማስመዝገብ":
-        return await truck_start(update, context)
-    if text == "🚛 የጭነት መኪና መፈለግ":
-        return await find_truck(update, context)
-    if text == "👤 የኔ መረጃ":
-        await profile(update, context)
-        return ConversationHandler.END
-    if text == "📍 የጭነት ክትትል":
-        await tracking_menu(update, context)
-        return ConversationHandler.END
-    if text == "🤝 የግንኙነት ጥያቄዎች":
-        await show_connection_requests(update, context)
-        return ConversationHandler.END
-    if text == "📋 የጭነት ደላሎች መዝገብ":
-        await show_broker_registry(update, context)
-        return ConversationHandler.END
-    if text == "🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ":
-        return await broker_start(update, context)
-    if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
-        await _start_admin_message_mode(update, context)
-        return ConversationHandler.END
-    if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
-        await service_payment(update, context)
-        return ConversationHandler.END
-    if text == "📞 Support":
-        await support_start(update, context)
-        return ConversationHandler.END
-    if text == "ℹ️ About":
-        await about(update, context)
-        return ConversationHandler.END
-
-    return ConversationHandler.END
-
-async def menu_interrupt(update, context):
-    clear_stale_user_state(context)
-    text = update.message.text
-
-    if text == "🚚 ጭነት መለጠፍ":
-        return await cargo_start(update, context)
-    if text == "🔎 ጭነት መፈለግ":
-        await find_cargo(update, context)
-        return ConversationHandler.END
-    if text == "🚛 የጭነት መኪና ማስመዝገብ":
-        return await truck_start(update, context)
-    if text == "🚛 የጭነት መኪና መፈለግ":
-        return await find_truck(update, context)
-    if text == "👤 የኔ መረጃ":
-        await profile(update, context)
-        return ConversationHandler.END
-    if text == "📍 የጭነት ክትትል":
-        await tracking_menu(update, context)
-        return ConversationHandler.END
-    if text == "🤝 የግንኙነት ጥያቄዎች":
-        await show_connection_requests(update, context)
-        return ConversationHandler.END
-    if text == "📋 የጭነት ደላሎች መዝገብ":
-        await show_broker_registry(update, context)
-        return ConversationHandler.END
-    if text == "🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ":
-        return await broker_start(update, context)
-    if text == "📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ":
-        await _start_admin_message_mode(update, context)
-        return ConversationHandler.END
-    if text == "💳 የአገልግሎት ክፍያ ለመፈፀም":
-        await service_payment(update, context)
-        return ConversationHandler.END
-    if text == "📞 Support":
-        await support_start(update, context)
-        return ConversationHandler.END
-    if text == "ℹ️ About":
-        await about(update, context)
-        return ConversationHandler.END
-
-    return ConversationHandler.END
-
-# ==================================================
-# MAIN
-# ==================================================
-
-def main():
-    if not TOKEN:
-        raise RuntimeError("BOT_TOKEN environment variable is missing.")
-
-    start_health_server()
-
-    try:
-        init_db()
-        print("✅ Database initialized")
-    except Exception as e:
-        print(f"❌ DB INIT ERROR: {e}")
-
-    application = Application.builder().token(TOKEN).concurrent_updates(True).build()
-    application.add_error_handler(error_handler)
-
-    # Simple commands
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("cargo", cargo_start))
-    application.add_handler(CommandHandler("truck", truck_start))
-    application.add_handler(CommandHandler("findcargo", find_cargo))
-    application.add_handler(CommandHandler("findtruck", find_truck))
-    application.add_handler(CommandHandler("myprofile", profile))
-    application.add_handler(CommandHandler("support", support_start))
-    application.add_handler(CommandHandler("about", about))
-    application.add_handler(CommandHandler("owner", owner_start))
-    application.add_handler(CommandHandler("broker", broker_start))
-    application.add_handler(CommandHandler("track", tracking_menu))
-
-    # Master Conversation
-    master_conversation = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚛 የጭነት መኪና ማስመዝገብ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🚛 የጭነት መኪና መፈለግ$"), menu_router),
-            MessageHandler(filters.Regex(r"^👤 የኔ መረጃ$"), menu_router),
-            MessageHandler(filters.Regex(r"^📍 የጭነት ክትትል$"), menu_router),
-            MessageHandler(filters.Regex(r"^🤝 የግንኙነት ጥያቄዎች$"), menu_router),
-            MessageHandler(filters.Regex(r"^📋 የጭነት ደላሎች መዝገብ$"), menu_router),
-            MessageHandler(filters.Regex(r"^🆕 የጭነት ደላላ ከሆኑ ይመዝገቡ$"), menu_router),
-            MessageHandler(filters.Regex(r"^📨 ወደ ጣና ጭነት መረጃና ፎቶ ለመላክ$"), menu_router),
-            MessageHandler(filters.Regex(r"^💳 የአገልግሎት ክፍያ ለመፈፀም$"), menu_router),
-            MessageHandler(filters.Regex(r"^📞 Support$"), menu_router),
-            MessageHandler(filters.Regex(r"^ℹ️ About$"), menu_router),
-            CommandHandler("owner", owner_start),
-            CommandHandler("broker", broker_start),
-            CommandHandler("cargo", cargo_start),
-            CommandHandler("truck", truck_start),
-            CallbackQueryHandler(connection_request, pattern=r"^connect_\d+$"),
-            CallbackQueryHandler(truck_connection_request, pattern=r"^truckconnect_\d+$"),
-            CallbackQueryHandler(tracking_send_start, pattern=r"^tracking_send_loc$"),
-            CallbackQueryHandler(tracking_stop_start, pattern=r"^tracking_stop$"),
-        ],
-        states={
-            CARGO_FROM: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_from),
-            ],
-            CARGO_TO: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_to),
-            ],
-            CARGO_TYPE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_type),
-            ],
-            CARGO_VEHICLE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(cargo_vehicle, pattern=r"^cargo_vehicle_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_vehicle_text),
-            ],
-            CARGO_SIZE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(cargo_size, pattern=r"^size_"),
-            ],
-            CARGO_WEIGHT: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_weight),
-            ],
-            CARGO_CALENDAR: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(cargo_calendar, pattern=r"^cal_"),
-            ],
-            CARGO_DATE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_date),
-            ],
-            CARGO_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_phone),
-            ],
-            CARGO_PRICE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_price),
-            ],
-            
-            TRUCK_ALL_INFO: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, truck_all_info),
-            ],
-            FIND_TRUCK_QUERY: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, find_truck_query),
-            ],
-            
-            OWNER_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, owner_name),
-            ],
-            OWNER_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, owner_phone),
-            ],
-            BROKER_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_name),
-            ],
-            BROKER_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_phone),
-            ],
-            BROKER_ADDRESS: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broker_address),
-            ],
-            CONNECT_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_name),
-            ],
-            CONNECT_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_phone),
-            ],
-            CONNECT_TYPE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, connect_type),
-            ],
-            
-            # 🔴 አዲስ የክትትል ስቴቶች
-            TRACK_SEND_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_send_name),
-            ],
-            TRACK_SEND_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_send_phone),
-            ],
-            TRACK_SEND_LOCATION: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.LOCATION, tracking_send_location),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_text_handler),
-            ],
-            STOP_TRACK_NAME: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_stop_name),
-            ],
-            STOP_TRACK_PHONE: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_stop_phone),
-            ],
-            STOP_TRACK_CONFIRM: [
-                MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt),
-                CallbackQueryHandler(tracking_stop_confirm, pattern=r"^stop_track_confirm$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_text_handler),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True,
-        conversation_timeout=CONVERSATION_TIMEOUT_SECONDS,
-    )
-    application.add_handler(master_conversation)
-
-    # Tracking callbacks
-    application.add_handler(CallbackQueryHandler(tracking_driver_choose, pattern=r"^tracking_driver$"))
-    application.add_handler(CallbackQueryHandler(tracking_customer_choose, pattern=r"^tracking_customer$"))
-    application.add_handler(CallbackQueryHandler(tracking_begin_location, pattern=r"^tracking_update:[A-Z0-9]+$"))
-    
-    application.add_handler(CallbackQueryHandler(request_stop_tracking, pattern=r"^stop_req:[A-Z0-9]+$"))
-    application.add_handler(CallbackQueryHandler(admin_approve_stop, pattern=r"^stop_approve:[A-Z0-9]+$"))
-    application.add_handler(CallbackQueryHandler(admin_reject_stop, pattern=r"^stop_reject:[A-Z0-9]+$"))
-    
-    application.add_handler(CallbackQueryHandler(admin_approve_tracking, pattern=r"^adminapprovetrack_\d+$"))
-    application.add_handler(CallbackQueryHandler(admin_reject_tracking, pattern=r"^adminrejecttrack_\d+$"))
-    
-    application.add_handler(MessageHandler(filters.LOCATION, tracking_location_handler), group=1)
-
-    # Connection callbacks
-    application.add_handler(CallbackQueryHandler(already_selected_callback, pattern=r"^already_selected$"))
-
-    # Subscribe check
-    application.add_handler(CallbackQueryHandler(subscribed_check_callback, pattern=r"^subscribed_check$"))
-
-    # Broker callbacks
-    application.add_handler(CallbackQueryHandler(broker_right_confirm, pattern=r"^brokerright_\d+$"))
-    application.add_handler(CallbackQueryHandler(broker_x_delete, pattern=r"^brokerxdelete_\d+$"))
-    application.add_handler(CallbackQueryHandler(admin_delete_broker, pattern=r"^admindeletebroker_\d+$"))
-
-    # Admin right/X/Clear
-    application.add_handler(CallbackQueryHandler(admin_right_confirm, pattern=r"^adminright_\d+$"))
-    application.add_handler(CallbackQueryHandler(admin_x_delete, pattern=r"^adminxdelete_\d+$"))
-    application.add_handler(CallbackQueryHandler(admin_clear_notification, pattern=r"^adminclear_\d+$"))
-
-    # Negotiation
-    application.add_handler(CallbackQueryHandler(agree_price, pattern=r"^agreeprice_\d+_\d+$"))
-    application.add_handler(CallbackQueryHandler(reject_price_button, pattern=r"^rejectprice_\d+_\d+$"))
-
-    # Admin payment
-    application.add_handler(CallbackQueryHandler(
-        admin_payment_action,
-        pattern=r"^admin(approve|reject)_\d+_(requester|other)_\d+$"
-    ))
-
-    # Admin delete connection
-    application.add_handler(CallbackQueryHandler(
-        admin_delete_connection,
-        pattern=r"^admindeleteconnection_\d+$"
-    ))
-
-    # Photo/Receipt
-    application.add_handler(MessageHandler(filters.PHOTO, receipt_photo))
-    application.add_handler(MessageHandler(
-        filters.Document.ALL & ~filters.COMMAND, receipt_photo
-    ))
-
-    # Text router
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
-
-    # Job queue
-    if application.job_queue:
-        application.job_queue.run_repeating(clean_expired_posts, interval=3600, first=60)
-        application.job_queue.run_repeating(auto_delete_messages, interval=60, first=30)
-        print("✅ Expiry cleaner + Auto-delete started")
-
-    print("TANA CARGO Bot is starting...")
-    application.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+    await update.message.reply_text(f"✅
