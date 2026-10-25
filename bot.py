@@ -228,6 +228,18 @@ def db_save_user(user_id, name, username, owner_name=None, owner_phone=None):
     conn.commit()
     conn.close()
 
+# 👇 አዲሱ የተጠቃሚዎች ብዛት ማሳያ ፈንክሽን (7000 መነሻ)
+def get_total_users_count():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        real_users = cursor.fetchone()[0]
+        # 7000 መነሻ ቁጥር ላይ የእውነተኛ ተጠቃሚዎችን ብዛት መደመር
+        return 7000 + real_users
+    finally:
+        conn.close()
+
 def db_save_cargo(cargo):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
@@ -389,7 +401,6 @@ def db_finish_tracking(tracking_code):
     finally:
         conn.close()
 
-# የተሻሻለው የስልክ ቁጥር መፈለጊያ ፈንክሽን (Fixing find_user_by_phone)
 def find_user_by_phone(phone):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
@@ -960,7 +971,6 @@ async def cargo_price(update, context):
                 pass
 
     return ConversationHandler.END
-
 # ==================================================
 # TRUCK REGISTRATION
 # ==================================================
@@ -1105,6 +1115,7 @@ async def truck_phone(update, context):
                 pass
 
     return ConversationHandler.END
+
 # ==================================================
 # BROKER REGISTRATION
 # ==================================================
@@ -1322,8 +1333,7 @@ async def admin_delete_broker(update, context):
     brokers[index]["active"] = False
     brokers[index]["approved"] = False
     await query.edit_message_text("✅ **የጭነት ደላላው ተሰርዟል።**")
-
-# ==================================================
+    # ==================================================
 # FIND CARGO / TRUCK
 # ==================================================
 
@@ -2906,7 +2916,7 @@ async def tracking_location_handler(update, context):
     )
 
 # ==================================================
-# BASIC COMMANDS
+# BASIC COMMANDS (የተሻሻለው start እና profile)
 # ==================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2917,9 +2927,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_save_user(user.id, user.full_name, user.username or "")
     except Exception as e:
         print(f"DB SAVE USER ERROR: {e}")
+        
+    total_users = get_total_users_count() # 👈 አዲሱ የተጠቃሚዎች ብዛት
+    
     await update.message.reply_text(
         "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
         "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
+        f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n" # 👈 ቁጥሩ በተግባር ላይ ይውላል
         "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።\n\n"
         "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
         reply_markup=main_menu(user.id)
@@ -2928,9 +2942,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def profile(update, context):
     user_id = update.effective_user.id
     user = users.get(user_id, {"name": update.effective_user.full_name, "username": update.effective_user.username or "", "id": user_id})
+    
+    total_users = get_total_users_count() # 👈 አዲሱ የተጠቃሚዎች ብዛት
+    
     message = (
         "👤 **የኔ መረጃ**\n\n"
         f"👤 ስም፦ {user['name']}\n🔗 Username፦ @{user['username'] or 'የለም'}\n🆔 Telegram ID፦ {user['id']}\n"
+        f"\n👥 **ጠቅላላ ተጠቃሚዎች፦** {total_users:,}\n" # 👈 ቁጥሩ በተግባር ላይ ይውላል
     )
     if "owner" in user:
         owner = user["owner"]
@@ -2940,6 +2958,7 @@ async def profile(update, context):
     my_cargo = [c for c in cargo_posts if c["user_id"] == user_id]
     my_trucks = [t for t in truck_posts if t["user_id"] == user_id]
     message += f"\n🚚 የለጠፉት ጭነት፦ {len(my_cargo)}\n🚛 የተመዘገቡ መኪኖች፦ {len(my_trucks)}"
+    
     await update.message.reply_text(message, reply_markup=main_menu(user_id))
 
 async def support_start(update, context):
