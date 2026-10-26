@@ -3468,6 +3468,22 @@ def main():
 
     print("TANA CARGO Bot is starting...")
     application.run_polling(drop_pending_updates=True)
+async def check_subscription(user_id, context):
+    return True
 
+async def subscribed_check_callback(update, context):
+    query = update.callback_query
+    user_id = update.effective_user.id
+    context.user_data["subscribed"] = True
+    await query.answer("✅ አመሰግናለሁ! Subscribe ማድረግዎን አረጋግጠናል።", show_alert=True)
+    try:
+        await query.edit_message_text("✅ **አመሰግናለሁ!**\n\nSubscribe ማድረግዎን አረጋግጠናል።\n\n👉 አሁን የፈለጉትን ምናሌ በመንካት ይቀጥሉ!")
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="👇 አሁን የፈለጉትን ምናሌ ይንኩ፦",
+        reply_markup=main_menu(user_id)
+    )
 if __name__ == "__main__":
     main()
