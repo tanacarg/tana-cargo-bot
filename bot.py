@@ -228,14 +228,12 @@ def db_save_user(user_id, name, username, owner_name=None, owner_phone=None):
     conn.commit()
     conn.close()
 
-# 👇 አዲሱ የተጠቃሚዎች ብዛት ማሳያ ፈንክሽን (7000 መነሻ)
 def get_total_users_count():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users")
         real_users = cursor.fetchone()[0]
-        # 7000 መነሻ ቁጥር ላይ የእውነተኛ ተጠቃሚዎችን ብዛት መደመር
         return 7000 + real_users
     finally:
         conn.close()
@@ -404,27 +402,45 @@ def db_finish_tracking(tracking_code):
 def find_user_by_phone(phone):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
-        row = conn.execute(
-            "SELECT user_id FROM users WHERE owner_phone = ? LIMIT 1", (phone,)
-        ).fetchone()
-        if row:
-            return int(row[0])
-        row = conn.execute(
-            "SELECT driver_user_id FROM tracking_sessions WHERE customer_phone = ? AND status IN ('ready','in_transit') ORDER BY created_at DESC LIMIT 1",
-            (phone,)
-        ).fetchone()
-        if row and row[0]:
-            return int(row[0])
-        row = conn.execute(
-            "SELECT user_id FROM cargo_posts WHERE phone = ? LIMIT 1", (phone,)
-        ).fetchone()
-        if row:
-            return int(row[0])
-        row = conn.execute(
-            "SELECT user_id FROM truck_posts WHERE phone = ? LIMIT 1", (phone,)
-        ).fetchone()
-        if row:
-            return int(row[0])
+        clean_phone = phone.strip()
+        if clean_phone.startswith("0"):
+            phone_variants = [clean_phone, "+251" + clean_phone[1:], "251" + clean_phone[1:]]
+        elif clean_phone.startswith("+251"):
+            phone_variants = [clean_phone, "0" + clean_phone[4:], "251" + clean_phone[4:]]
+        elif clean_phone.startswith("251"):
+            phone_variants = [clean_phone, "0" + clean_phone[3:], "+" + clean_phone]
+        else:
+            phone_variants = [clean_phone]
+            
+        for p in phone_variants:
+            row = conn.execute(
+                "SELECT user_id FROM users WHERE owner_phone = ? LIMIT 1", (p,)
+            ).fetchone()
+            if row:
+                return int(row[0])
+                
+        for p in phone_variants:
+            row = conn.execute(
+                "SELECT driver_user_id FROM tracking_sessions WHERE customer_phone = ? AND status IN ('ready','in_transit') ORDER BY created_at DESC LIMIT 1",
+                (p,)
+            ).fetchone()
+            if row and row[0]:
+                return int(row[0])
+                
+        for p in phone_variants:
+            row = conn.execute(
+                "SELECT user_id FROM cargo_posts WHERE phone = ? LIMIT 1", (p,)
+            ).fetchone()
+            if row:
+                return int(row[0])
+                
+        for p in phone_variants:
+            row = conn.execute(
+                "SELECT user_id FROM truck_posts WHERE phone = ? LIMIT 1", (p,)
+            ).fetchone()
+            if row:
+                return int(row[0])
+            
     finally:
         conn.close()
     return None
@@ -455,6 +471,7 @@ pending_deletes = []
 pending_track_requests = []
 gmaps_share_requests = []
 tracking_stops = []
+pending_gmaps_shares = []  # 👈 አዲስ የተጨመረ (የማይመዘገቡ ተጠቃሚዎችን መረጃ ለማስቀመጥ)
 
 # ==================================================
 # STATES
@@ -488,6 +505,8 @@ OWNER_NAME, OWNER_PHONE = range(17, 19)
     TRACK_SHARE_ADDRESS, TRACK_SHARE_NAME, TRACK_SHARE_PHONE,
     TRACK_STOP_NAME, TRACK_STOP_PHONE
 ) = range(29, 34)
+
+START_PHONE = 34
 
 # ==================================================
 # MENUS
@@ -560,6 +579,16 @@ def subscribe_keyboard():
 # ==================================================
 # HELPERS
 # ==================================================
+
+def is_user_registered(user_id):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        row = conn.execute("SELECT owner_phone FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if row and row[0]:
+            return True
+    finally:
+        conn.close()
+    return False
 
 def normalize(text):
     if text is None:
@@ -1135,7 +1164,7 @@ async def broker_name(update, context):
     context.user_data["broker"]["name"] = update.message.text.strip()
     await update.message.reply_text(
         "2️⃣ ስልክ ቁጥርዎን ይጻፉ።\n"
-        "በ09 ወይም በ07 የሚጀመር እና 10 ዲጂት ያለው መሆን አለበት።\n"
+        "በ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\n"
         "ምሳሌ፦ 0912345678"
     )
     return BROKER_PHONE
@@ -1333,7 +1362,7 @@ async def admin_delete_broker(update, context):
     brokers[index]["active"] = False
     brokers[index]["approved"] = False
     await query.edit_message_text("✅ **የጭነት ደላላው ተሰርዟል።**")
-    # ==================================================
+# ==================================================
 # FIND CARGO / TRUCK
 # ==================================================
 
@@ -2321,7 +2350,7 @@ async def admin_payment_action(update, context):
         except Exception:
             pass
 # ==================================================
-# TRACKING — MAIN MENU (ማስተካከያ 2 የተደረገበት)
+# TRACKING — MAIN MENU
 # ==================================================
 
 async def tracking_menu(update, context):
@@ -2331,7 +2360,6 @@ async def tracking_menu(update, context):
     context.user_data.pop("tracking_stop", None)
     context.user_data.pop("track_new", None)
 
-    # ሁለቱ የመጀመሪያ ቁልፎች ተወግደዋል
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "🗺️ የጎግል መረጃ ለባለጭነቶች (ለባለንብረቶች) ለመላክ ይህን ይጫኑ 👈",
@@ -2454,9 +2482,11 @@ async def admin_approve_gmaps(update, context):
         lon = loc["longitude"]
         map_url = f"https://maps.google.com/?q={lat},{lon}"
         map_address = loc.get("address", "")
+        traccar_live_url = f"http://demo2.traccar.org/?deviceId={TRACCAR_DEVICE_ID}"
     else:
         map_url = ""
         map_address = ""
+        traccar_live_url = ""
 
     await query.edit_message_text(
         f"✅ **ጸድቋል!**\n\n"
@@ -2469,20 +2499,39 @@ async def admin_approve_gmaps(update, context):
 
     if recipient_user_id and map_url:
         try:
+            await context.bot.send_location(
+                chat_id=recipient_user_id,
+                latitude=float(lat),
+                longitude=float(lon),
+                live_period=3600
+            )
+            
             await context.bot.send_message(
                 chat_id=recipient_user_id,
                 text=(
                     "🗺️ **TANA CARGO — የቀጥታ ክትትል**\n\n"
                     "ውድ ደንበኛችን፣ የርሶን መገኛ አድራሻ እንዲከታተል ለፈለጉት ሰው "
                     "አድራሾትን በGoogle Map ልከናል።\n\n"
-                    f"🗺️ [የቀጥታ ክትትል ሊንክ]({map_url})\n\n"
+                    f"🗺️ [በTraccar Live Map ቀጥታ ለመከታተል]({traccar_live_url})\n\n"
                     f"📍 አድራሻ: {map_address}\n\n"
-                    "👉 ሊንኩን ተጭነው የመኪናውን ቦታ ይከታተሉ።"
+                    "👉 ከላይ የተላከውን የቦታ መልዕክት በመንካት የቀጥታ እንቅስቃሴውን ማየት ይችላሉ።"
                 ),
                 disable_web_page_preview=False
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error sending live location: {e}")
+            try:
+                await context.bot.send_message(
+                    chat_id=recipient_user_id,
+                    text=(
+                        "🗺️ **TANA CARGO — የቀጥታ ክትትል**\n\n"
+                        f"🗺️ [የቀጥታ ክትትል ሊንክ]({traccar_live_url})\n\n"
+                        f"📍 አድራሻ: {map_address}"
+                    ),
+                    disable_web_page_preview=False
+                )
+            except Exception:
+                pass
 
     try:
         if map_url:
@@ -2492,7 +2541,7 @@ async def admin_approve_gmaps(update, context):
                     "✅ **መረጃዎ ጸድቋል!**\n\n"
                     "ውድ ደንበኛችን የርሶን መገኛ አድራሻ እንዲከታተል ለፈለጉት ሰው "
                     "አድራሾትን በGoogle Map ልከናል።\n\n"
-                    f"🗺️ [የቀጥታ ክትትል ሊንክ]({map_url})"
+                    f"🗺️ [የቀጥታ ክትትል ሊንክ]({traccar_live_url})"
                 ),
                 disable_web_page_preview=False
             )
@@ -2508,16 +2557,28 @@ async def admin_approve_gmaps(update, context):
         pass
 
     if not recipient_user_id:
+        pending_gmaps_shares.append({
+            "phone": info["phone"],
+            "name": info["name"],
+            "lat": lat if loc and loc.get("latitude") else None,
+            "lon": lon if loc and loc.get("latitude") else None,
+            "address": map_address,
+            "traccar_url": traccar_live_url
+        })
+        
         for admin_id in get_admin_ids():
             try:
                 await context.bot.send_message(
                     chat_id=admin_id,
                     text=(
                         f"⚠️ **ማሳወቂያ**\n\n"
-                        f"ለ {info['name']} ({info['phone']}) መልዕክት ለመላክ አልተቻለም።\n"
-                        "ተጠቃሚው ቦቱን አልተመዘገበም ወይም የስልክ ቁጥሩ አልተገኘም።\n"
-                        "እባክዎ በእጅ ያስተላልፉ።"
-                    )
+                        f"ለ **{info['name']} ({info['phone']})** መልዕክት ለመላክ አልተቻለም።\n\n"
+                        "ተጠቃሚው ቦቱን አልተመዘገበም ወይም የስልክ ቁጥሩ አልተገኘም።\n\n"
+                        "👉 **እባክዎ ደውለው TANA CARGO ላይ Telegram በሚጠቀምበት ስልክ እንዲመዘገብ ያድርጉት!**\n\n"
+                        "👉 **ወይም እባክዎ በእጅ ያስተላልፉ።**\n\n"
+                        "✅ **መረጃው ተቀምጧል። ተጠቃሚው ስልክ ቁጥሩን አስመዝግቦ እንደጨረሰ ወዲያውኑ በራስ-ሰር ይደርሰዋል።**"
+                    ),
+                    parse_mode="Markdown"
                 )
             except Exception:
                 pass
@@ -2813,6 +2874,11 @@ async def text_router(update, context):
     if update.effective_user is None:
         return
     user_id = update.effective_user.id
+    
+    if not is_user_registered(user_id):
+        await update.message.reply_text("⚠️ **እባክዎ መጀመሪያ /start የሚለውን ተጭነው ስልክ ቁጥርዎን ያስመዝግቡ።**")
+        return
+
     if context.user_data.get("sending_admin_message"):
         return await handle_user_message(update, context)
     if (context.user_data.get("tracking_lookup_waiting")
@@ -2880,11 +2946,27 @@ async def tracking_show_result(update, context, record):
             f"🗺️ [በካርታ ላይ ለማየት እዚህ ይጫኑ]({map_url})\n\n"
             "⚠️ ይህ የመጨረሻ የተላከ ቦታ ነው።"
         )
+        try:
+            await update.effective_message.reply_location(
+                latitude=lat, 
+                longitude=lon, 
+                live_period=3600
+            )
+        except Exception:
+            pass
     elif record.get("latitude") is not None:
         lat = float(record["latitude"])
         lon = float(record["longitude"])
         map_url = f"https://maps.google.com/?q={lat},{lon}"
         msg += f"\n📍 የመጨረሻ የተላከ ቦታ፦ {lat:.6f}, {lon:.6f}\n🗺️ [በካርታ ላይ ለማየት]({map_url})"
+        try:
+            await update.effective_message.reply_location(
+                latitude=lat, 
+                longitude=lon, 
+                live_period=3600
+            )
+        except Exception:
+            pass
     else:
         msg += "\n📍 ሹፌሩ እስካሁን የGPS ቦታ አልላከም።"
     kb = None
@@ -2922,33 +3004,117 @@ async def tracking_location_handler(update, context):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     user = update.effective_user
-    users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})
+    
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
-        db_save_user(user.id, user.full_name, user.username or "")
+        row = conn.execute("SELECT owner_phone FROM users WHERE user_id = ?", (user.id,)).fetchone()
+        saved_phone = row[0] if row else None
+    finally:
+        conn.close()
+    
+    if saved_phone:
+        users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})
+        try:
+            db_save_user(user.id, user.full_name, user.username or "")
+        except Exception as e:
+            print(f"DB SAVE USER ERROR: {e}")
+            
+        total_users = get_total_users_count()
+        await update.message.reply_text(
+            "👋 **እንኳን ደህና መጡ ወደ TANA CARGO!**\n\n"
+            f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
+            "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
+            reply_markup=main_menu(user.id)
+        )
+        return ConversationHandler.END
+    
+    await update.message.reply_text(
+        "🚛 **TANA CARGO | ጣና ጭነት** 📦\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👋 **እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!**\n\n"
+        "📱 **እባክዎ ለመጀመር የራስዎን ስልክ ቁጥር ያስመዝግቡ።**\n\n"
+        "🔸 በ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\n"
+        "🔸 ምሳሌ፦ `0912345678`\n\n"
+        "⚠️ **ማሳሰቢያ፦** ይህ ስልክ ቁጥርዎ በTANA CARGO ለሚደረጉ ግንኙነቶች ይጠቅማል።",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="Markdown"
+    )
+    return START_PHONE
+
+async def start_phone_input(update, context):
+    phone = update.message.text.strip().split("\n")[0].strip()
+    is_valid, error = validate_phone(phone)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678")
+        return START_PHONE
+    
+    user = update.effective_user
+    users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})
+    users[user.id]["owner"] = {"phone": phone, "name": user.full_name, "user_id": user.id}
+    
+    try:
+        db_save_user(user.id, user.full_name, user.username or "", owner_name=user.full_name, owner_phone=phone)
     except Exception as e:
         print(f"DB SAVE USER ERROR: {e}")
         
-    total_users = get_total_users_count() # 👈 አዲሱ የተጠቃሚዎች ብዛት
+    total_users = get_total_users_count()
     
+    # አዲስ ምዝገባ ካለ በመጠባበቅ ላይ ያለ መረጃ እንዳለ ማረጋገጥ
+    pending_infos = [p for p in pending_gmaps_shares if p["phone"] == phone]
+    for p_info in pending_infos:
+        try:
+            if p_info["lat"] and p_info["lon"]:
+                await context.bot.send_location(
+                    chat_id=user.id,
+                    latitude=float(p_info["lat"]),
+                    longitude=float(p_info["lon"]),
+                    live_period=3600
+                )
+            
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=(
+                    "🎉 **በመጠባበቅ ላይ የነበረ መረጃ ተገኝቷል!**\n\n"
+                    f"🗺️ [የቀጥታ ክትትል ሊንክ]({p_info['traccar_url']})\n\n"
+                    f"📍 አድራሻ: {p_info['address']}\n\n"
+                    "👉 ከላይ የተላከውን የቦታ መልዕክት በመንካት የቀጥታ እንቅስቃሴውን ማየት ይችላሉ።"
+                ),
+                disable_web_page_preview=False
+            )
+            pending_gmaps_shares.remove(p_info)
+            
+            for admin_id in get_admin_ids():
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=f"✅ **ተጠቃሚው ስልክ ቁጥሩን አስመዝግቧል። በመጠባበቅ ላይ የነበረው መረጃ በተሳካ ሁኔታ ተልኳል።**\n\n👤 ስም: {p_info['name']}\n📞 ስልክ: {phone}"
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Error sending pending gmaps info: {e}")
+
     await update.message.reply_text(
-        "👋 እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!\n\n"
-        "🚚 የጭነት ባለቤቶችንና ጫኝ መኪኖችን እናገናኛለን።\n\n"
-        f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n" # 👈 ቁጥሩ በተግባር ላይ ይውላል
-        "🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።\n\n"
+        "✅ **ስልክ ቁጥርዎ በትክክል ተመዝግቧል!**\n\n"
+        f"📞 **{phone}**\n\n"
+        "👋 አሁን እንኳን ደህና መጡ ወደ TANA CARGO ጣና ጭነት!\n"
+        f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
+        "📢 ስለጣና ካርጎ ሙሉ መረጃ እንዲኖርዎት 👉 @tanapage ነክተው Join ያድርጉ።\n\n"
         "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
         reply_markup=main_menu(user.id)
     )
+    return ConversationHandler.END
 
 async def profile(update, context):
     user_id = update.effective_user.id
     user = users.get(user_id, {"name": update.effective_user.full_name, "username": update.effective_user.username or "", "id": user_id})
     
-    total_users = get_total_users_count() # 👈 አዲሱ የተጠቃሚዎች ብዛት
+    total_users = get_total_users_count()
     
     message = (
         "👤 **የኔ መረጃ**\n\n"
         f"👤 ስም፦ {user['name']}\n🔗 Username፦ @{user['username'] or 'የለም'}\n🆔 Telegram ID፦ {user['id']}\n"
-        f"\n👥 **ጠቅላላ ተጠቃሚዎች፦** {total_users:,}\n" # 👈 ቁጥሩ በተግባር ላይ ይውላል
+        f"\n👥 **ጠቅላላ ተጠቃሚዎች፦** {total_users:,}\n"
     )
     if "owner" in user:
         owner = user["owner"]
@@ -3068,6 +3234,11 @@ MASTER_MENU_REGEX = (
 async def menu_router(update, context):
     text = update.message.text
     uid = update.effective_user.id
+    
+    if not is_user_registered(uid):
+        await update.message.reply_text("⚠️ **እባክዎ መጀመሪያ /start የሚለውን ተጭነው ስልክ ቁጥርዎን ያስመዝግቡ።**")
+        return ConversationHandler.END
+
     context.user_data["subscribed"] = True
     clear_stale_user_state(context)
     if text == "🚚 ጭነት መለጠፍ":
@@ -3233,6 +3404,7 @@ def main():
             TRACK_SHARE_PHONE: [MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_share_phone)],
             TRACK_STOP_NAME: [MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_stop_name)],
             TRACK_STOP_PHONE: [MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, tracking_stop_phone)],
+            START_PHONE: [MessageHandler(filters.Regex(MASTER_MENU_REGEX), menu_interrupt), MessageHandler(filters.TEXT & ~filters.COMMAND, start_phone_input)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
