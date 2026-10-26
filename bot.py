@@ -30,6 +30,9 @@ SUPPORT_PHONE_2 = "0912991128"
 BOT_USERNAME = "tanacargobot"
 CHANNEL_USERNAME = "tanapage"
 
+# 👇 የፎቶው File ID እዚህ ገብቷል
+START_IMAGE_ID = "AgACAgQAAxkBAAFWw_Vq389auQ7yoeq8rNETEyhfn02JagACCw9rG-tuAVNIehm8-b92jwEAAwIAA3kAAz0E"
+
 TRACCAR_URL = "http://demo2.traccar.org"
 TRACCAR_TOKEN = "RjBEAiBc98uaEhRRlPGxO9_vgSO0ZpaM6RfAKBJ6wRYXgO_pZgIgPR5JRatK9XmfQXCwT9Xc-Di5OiLQHUviT9NF6RxwefZ7ImkiOjg5MjE4NDA2Mzc2MTgzNjE1NzUsInUiOjgzNjcsImUiOiIyMDI2LTEwLTI4VDIxOjAwOjAwLjAwMCswMDowMCJ9"
 TRACCAR_DEVICE_ID = "92643104"
@@ -471,7 +474,7 @@ pending_deletes = []
 pending_track_requests = []
 gmaps_share_requests = []
 tracking_stops = []
-pending_gmaps_shares = []  # 👈 አዲስ የተጨመረ (የማይመዘገቡ ተጠቃሚዎችን መረጃ ለማስቀመጥ)
+pending_gmaps_shares = []
 
 # ==================================================
 # STATES
@@ -562,18 +565,6 @@ def route_choice_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🌍 በማንኛውም ቦታ", callback_data="route_anywhere")],
         [InlineKeyboardButton("📍 በርሶ ምርጫ", callback_data="route_custom")],
-    ])
-
-def subscribe_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "📢 TANA CARGO ቻናል ተቀላቀል",
-            url=f"https://t.me/{CHANNEL_USERNAME}"
-        )],
-        [InlineKeyboardButton(
-            "✅ Subscribe አድርጌያለሁ",
-            callback_data="subscribed_check"
-        )],
     ])
 
 # ==================================================
@@ -723,24 +714,6 @@ def is_selected_by_other(item_type, item_index, requester_id):
                 and req.get("status") in ["pending", "negotiating", "awaiting_payment", "admin_confirming"]):
                 return True
     return False
-
-async def check_subscription(user_id, context):
-    return True
-
-async def subscribed_check_callback(update, context):
-    query = update.callback_query
-    user_id = update.effective_user.id
-    context.user_data["subscribed"] = True
-    await query.answer("✅ አመሰግናለሁ! Subscribe ማድረግዎን አረጋግጠናል።", show_alert=True)
-    try:
-        await query.edit_message_text("✅ **አመሰግናለሁ!**\n\nSubscribe ማድረግዎን አረጋግጠናል።\n\n👉 አሁን የፈለጉትን ምናሌ በመንካት ይቀጥሉ!")
-    except Exception:
-        pass
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="👇 አሁን የፈለጉትን ምናሌ ይንኩ፦",
-        reply_markup=main_menu(user_id)
-    )
 # ==================================================
 # CARGO POSTING
 # ==================================================
@@ -2484,6 +2457,8 @@ async def admin_approve_gmaps(update, context):
         map_address = loc.get("address", "")
         traccar_live_url = f"http://demo2.traccar.org/?deviceId={TRACCAR_DEVICE_ID}"
     else:
+        lat = None
+        lon = None
         map_url = ""
         map_address = ""
         traccar_live_url = ""
@@ -2560,8 +2535,8 @@ async def admin_approve_gmaps(update, context):
         pending_gmaps_shares.append({
             "phone": info["phone"],
             "name": info["name"],
-            "lat": lat if loc and loc.get("latitude") else None,
-            "lon": lon if loc and loc.get("latitude") else None,
+            "lat": lat,
+            "lon": lon,
             "address": map_address,
             "traccar_url": traccar_live_url
         })
@@ -3005,14 +2980,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     user = update.effective_user
     
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        row = conn.execute("SELECT owner_phone FROM users WHERE user_id = ?", (user.id,)).fetchone()
-        saved_phone = row[0] if row else None
-    finally:
-        conn.close()
-    
-    if saved_phone:
+    # ተጠቃሚው ቀድሞ ስልክ ቁጥር ካስመዘገበ በቀጥታ ምናሌውን ይስጠው
+    if is_user_registered(user.id):
         users.setdefault(user.id, {"name": user.full_name, "username": user.username or "", "id": user.id})
         try:
             db_save_user(user.id, user.full_name, user.username or "")
@@ -3020,25 +2989,55 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"DB SAVE USER ERROR: {e}")
             
         total_users = get_total_users_count()
-        await update.message.reply_text(
-            "👋 **እንኳን ደህና መጡ ወደ TANA CARGO!**\n\n"
-            f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
-            "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
-            reply_markup=main_menu(user.id)
-        )
+        
+        try:
+            await update.message.reply_photo(
+                photo=START_IMAGE_ID,
+                caption=(
+                    "👋 **እንኳን ደህና መጡ ወደ TANA CARGO!**\n\n"
+                    f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
+                    "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦"
+                ),
+                reply_markup=main_menu(user.id),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await update.message.reply_text(
+                "👋 **እንኳን ደህና መጡ ወደ TANA CARGO!**\n\n"
+                f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
+                "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
+                reply_markup=main_menu(user.id),
+                parse_mode="Markdown"
+            )
+            
         return ConversationHandler.END
     
-    await update.message.reply_text(
-        "🚛 **TANA CARGO | ጣና ጭነት** 📦\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👋 **እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!**\n\n"
-        "📱 **እባክዎ ለመጀመር የራስዎን ስልክ ቁጥር ያስመዝግቡ።**\n\n"
-        "🔸 በ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\n"
-        "🔸 ምሳሌ፦ `0912345678`\n\n"
-        "⚠️ **ማሳሰቢያ፦** ይህ ስልክ ቁጥርዎ በTANA CARGO ለሚደረጉ ግንኙነቶች ይጠቅማል።",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="Markdown"
-    )
+    # ስልክ ከሌለው ፎቶውን አድርጎ ስልክ እንዲያስገባ ይጠይቀው
+    try:
+        await update.message.reply_photo(
+            photo=START_IMAGE_ID,
+            caption=(
+                "🚛 **TANA CARGO | ጣና ጭነት** 📦\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "👋 **እንኳን ወደ TANA CARGO ጣና ጭነት በደህና መጡ!**\n\n"
+                "📱 **እባክዎ ለመጀመር የራስዎን ስልክ ቁጥር ያስመዝግቡ።**\n\n"
+                "🔸 በ09 ወይም በ07 የሚጀምር እና 10 ዲጂት ያለው መሆን አለበት።\n"
+                "🔸 ምሳሌ፦ `0912345678`\n\n"
+                "⚠️ **ማሳሰቢያ፦** ይህ ስልክ ቁጥርዎ በTANA CARGO ለሚደረጉ ግንኙነቶች ይጠቅማል።"
+            ),
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        await update.message.reply_text(
+            "🚛 **TANA CARGO | ጣና ጭነት** 📦\n\n"
+            "👋 **እንኳን ደህና መጡ!**\n\n"
+            "📱 **እባክዎ ለመጀመር የራስዎን ስልክ ቁጥር ያስመዝግቡ።**\n"
+            "🔸 ምሳሌ፦ `0912345678`",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="Markdown"
+        )
+        
     return START_PHONE
 
 async def start_phone_input(update, context):
@@ -3094,15 +3093,27 @@ async def start_phone_input(update, context):
         except Exception as e:
             print(f"Error sending pending gmaps info: {e}")
 
-    await update.message.reply_text(
-        "✅ **ስልክ ቁጥርዎ በትክክል ተመዝግቧል!**\n\n"
-        f"📞 **{phone}**\n\n"
-        "👋 አሁን እንኳን ደህና መጡ ወደ TANA CARGO ጣና ጭነት!\n"
-        f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
-        "📢 ስለጣና ካርጎ ሙሉ መረጃ እንዲኖርዎት 👉 @tanapage ነክተው Join ያድርጉ።\n\n"
-        "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
-        reply_markup=main_menu(user.id)
-    )
+    try:
+        await update.message.reply_photo(
+            photo=START_IMAGE_ID,
+            caption=(
+                "✅ **ስልክ ቁጥርዎ በትክክል ተመዝግቧል!**\n\n"
+                f"📞 **{phone}**\n\n"
+                "👋 አሁን እንኳን ደህና መጡ ወደ TANA CARGO ጣና ጭነት!\n"
+                f"👥 **እስካሁን የተቀላቀሉ ተጠቃሚዎች፦** {total_users:,}\n\n"
+                "📢 ስለጣና ካርጎ ሙሉ መረጃ እንዲኖርዎት 👉 @tanapage ነክተው Join ያድርጉ።\n\n"
+                "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦"
+            ),
+            reply_markup=main_menu(user.id),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        await update.message.reply_text(
+            "✅ **ስልክ ቁጥርዎ በትክክል ተመዝግቧል!**\n\n"
+            "👇 ከታች ካለው ምናሌ የፈለጉትን ይምረጡ፦",
+            reply_markup=main_menu(user.id)
+        )
+        
     return ConversationHandler.END
 
 async def profile(update, context):
@@ -3337,7 +3348,6 @@ def main():
     application = Application.builder().token(TOKEN).concurrent_updates(True).build()
     application.add_error_handler(error_handler)
 
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cargo", cargo_start))
     application.add_handler(CommandHandler("truck", truck_start))
     application.add_handler(CommandHandler("findcargo", find_cargo))
@@ -3351,6 +3361,7 @@ def main():
 
     master_conversation = ConversationHandler(
         entry_points=[
+            CommandHandler("start", start), # 👈 እዚህ ብቻ መሆን አለበት
             MessageHandler(filters.Regex(r"^🚚 ጭነት መለጠፍ$"), menu_router),
             MessageHandler(filters.Regex(r"^🔎 ጭነት መፈለግ$"), menu_router),
             MessageHandler(filters.Regex(r"^🚛 የጭነት መኪና ማስመዝገብ$"), menu_router),
