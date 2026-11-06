@@ -49,8 +49,7 @@ DB_PATH = None
 
 class _CompatRow(dict):
     def __getitem__(self, key):
-        if isinstance(key, int):
-            return list(self.values())[key]
+        if isinstance(key, int): return list(self.values())[key]
         return super().__getitem__(key)
 
 class _CompatCursor:
@@ -104,7 +103,7 @@ def _db_connect(*args, **kwargs):
     return _CompatConnection(psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10))
 
 # ==================================================
-# TRACCAR API & KEEP ALIVE
+# TRACCAR API
 # ==================================================
 
 def _cached_traccar_location(device_id: str):
@@ -122,8 +121,7 @@ def _cached_traccar_location(device_id: str):
                 "status": "offline",
             }
         finally: conn.close()
-    except Exception:
-        return None
+    except Exception: return None
 
 def _save_traccar_location(device_id: str, location: dict):
     try:
@@ -138,8 +136,7 @@ def _save_traccar_location(device_id: str, location: dict):
                  datetime.now().astimezone().isoformat(timespec="seconds")))
             conn.commit()
         finally: conn.close()
-    except Exception as e:
-        print(f"GPS cache write error: {e}")
+    except Exception as e: print(f"GPS cache write error: {e}")
 
 def get_traccar_device_id_for_user(user_id=None):
     if user_id is not None:
@@ -151,8 +148,7 @@ def get_traccar_device_id_for_user(user_id=None):
     return str(TRACCAR_DEVICE_ID).strip()
 
 def get_traccar_location(device_id: str):
-    if not TRACCAR_TOKEN:
-        return _cached_traccar_location(device_id)
+    if not TRACCAR_TOKEN: return _cached_traccar_location(device_id)
     try:
         headers = {"Authorization": f"Bearer {TRACCAR_TOKEN}"}
         res = requests.get(f"{TRACCAR_URL}/api/devices", headers=headers, params={"uniqueId": str(device_id)}, timeout=10)
@@ -203,7 +199,7 @@ def et_new_year_gregorian(et_year):
     return datetime(gc_year, 9, start_day)
 def et_to_gc(et_year, et_month, et_day):
     max_day = 6 if et_month == 13 and is_ethiopian_leap_year(et_year) else 5 if et_month == 13 else 30
-    if et_month < 1 or et_month > 13 or et_day < 1 or et_day > max_day: raise ValueError("Invalid Ethiopian date")
+    if et_month < 1 or et_month > 13 or et_day < 1 or et_day > max_day: raise ValueError("Invalid date")
     return et_new_year_gregorian(et_year) + timedelta(days=(et_month - 1) * 30 + et_day - 1)
 def gc_to_et_date(gc_date):
     candidate_year = gc_date.year - 7
@@ -216,7 +212,7 @@ def gc_to_et_date(gc_date):
     day = days % 30 + 1
     if month == 13:
         max_day = 6 if is_ethiopian_leap_year(candidate_year) else 5
-        if day > max_day: raise ValueError("Gregorian date conversion outside Ethiopian year")
+        if day > max_day: raise ValueError("Out of year")
     return candidate_year, month, day
 def parse_flexible_date(date_text):
     raw = date_text.strip().split("\n")[0].strip()
@@ -234,7 +230,7 @@ def convert_calendar(date_parts, calendar):
         if calendar == "ET":
             if month < 1 or month > 13: return "", "", "ወር 1 እና 13 መካከል መሆን አለበት።"
             max_day = 6 if month == 13 and is_ethiopian_leap_year(year) else 5 if month == 13 else 30
-            if day < 1 or day > max_day: return "", "", f"በዚህ ወር ቀኑ 1 እና {max_day} መካከል መሆን አለበት።"
+            if day < 1 or day > max_day: return "", "", f"ቀኑ 1 እና {max_day} መካከል መሆን አለበት።"
             gc_obj = et_to_gc(year, month, day)
             et_year, et_month, et_day = year, month, day
         else:
@@ -279,21 +275,79 @@ def init_db():
     conn.commit()
     conn.close()
 
-def db_record_referral(referrer_id, referred_id):
-    if not referrer_id or not referred_id or int(referrer_id) == int(referred_id): return False
+def load_persistent_data():
+    global cargo_posts, truck_posts, brokers, connection_requests, users
+    global pending_listing_broadcasts, next_listing_broadcast_id
+    global gmaps_share_requests, tracking_stops, pending_gmaps_shares
     conn = _db_connect(DB_PATH)
+    conn.row_factory = dict_row
     try:
-        cur = conn.cursor()
-        cur.execute("INSERT INTO referrals (referrer_id, referred_id, created_at) VALUES (?, ?, ?) ON CONFLICT(referred_id) DO NOTHING", (int(referrer_id), int(referred_id), datetime.now(timezone.utc).isoformat()))
-        conn.commit()
-        return cur.rowcount > 0
-    finally: conn.close()
-
-def db_referral_count(user_id):
-    conn = _db_connect(DB_PATH)
-    try:
-        row = conn.execute("SELECT COUNT(*) AS n FROM referrals WHERE referrer_id=?", (int(user_id),)).fetchone()
-        return int(row["n"] if row else 0)
+        users = {}
+        for row in conn.execute("SELECT * FROM users"):
+            r = dict(row)
+            users[int(r["user_id"])] = {
+                "id": int(r["user_id"]), "name": r.get("name") or "",
+                "username": r.get("username") or "",
+                "owner": {"name": r.get("owner_name") or r.get("name") or "", "phone": r.get("owner_phone") or "", "user_id": int(r["user_id"])}
+            }
+        cargo_posts = []
+        for row in conn.execute("SELECT * FROM cargo_posts ORDER BY id"):
+            r = dict(row)
+            cargo_posts.append({
+                "id": r["id"], "user_id": r["user_id"], "from": r["from_location"],
+                "to": r["to_location"], "type": r["cargo_type"], "vehicle": r["vehicle"],
+                "size": r["size"], "size_name": r["size_name"], "weight": r["weight"],
+                "date_et": r["date_et"], "date_gc": r["date_gc"], "phone": r["phone"],
+                "price": r["price"], "price_display": r["price_display"],
+                "price_status": r["price_status"], "active": bool(r["active"]),
+                "timestamp": r["timestamp"], "expiry_date": r["expiry_date"],
+                "poster_type": r["poster_type"] or "customer"
+            })
+        truck_posts = []
+        for row in conn.execute("SELECT * FROM truck_posts ORDER BY id"):
+            r = dict(row)
+            truck_posts.append({
+                "id": r["id"], "user_id": r["user_id"], "type": r["truck_type"],
+                "plate": r["plate"], "capacity": r["capacity"], "route": r["route"],
+                "address": r["address"], "driver": r["driver"], "phone": r["phone"],
+                "active": bool(r["active"]), "timestamp": r["timestamp"],
+                "expiry_date": r["expiry_date"], "poster_type": r["poster_type"] or "customer"
+            })
+        brokers = []
+        for row in conn.execute("SELECT * FROM brokers ORDER BY id"):
+            r = dict(row)
+            brokers.append({
+                "id": r["id"], "user_id": r["user_id"], "name": r["name"],
+                "username": r["username"], "phone": r["phone"], "address": r["address"],
+                "active": bool(r["active"]), "approved": bool(r["approved"]),
+                "timestamp": r["timestamp"], "sectors": json.loads(r.get("sectors") or "[]")
+            })
+        connection_requests = []
+        for row in conn.execute("SELECT payload FROM connection_requests ORDER BY request_index"):
+            try: connection_requests.append(json.loads(row["payload"]))
+            except (TypeError, json.JSONDecodeError): continue
+        pending_listing_broadcasts = {}
+        for row in conn.execute("SELECT id,payload FROM pending_listing_broadcasts WHERE status='pending' ORDER BY id"):
+            try: pending_listing_broadcasts[int(row["id"])] = json.loads(row["payload"])
+            except (TypeError, ValueError, json.JSONDecodeError): continue
+        last_listing_id = conn.execute("SELECT COALESCE(MAX(id),0) FROM pending_listing_broadcasts").fetchone()[0]
+        next_listing_broadcast_id = int(last_listing_id or 0) + 1
+        gmaps_share_requests = []
+        tracking_stops = []
+        for row in conn.execute("SELECT request_type,request_index,payload FROM gps_admin_requests ORDER BY request_type,request_index"):
+            try:
+                payload = json.loads(row["payload"])
+                if row["request_type"] == "gmaps": gmaps_share_requests.append(payload)
+                elif row["request_type"] == "stop": tracking_stops.append(payload)
+            except (TypeError, json.JSONDecodeError): continue
+        pending_gmaps_shares = []
+        for row in conn.execute("SELECT id,payload FROM pending_gmaps_shares ORDER BY id"):
+            try:
+                payload = json.loads(row["payload"])
+                payload["_db_id"] = int(row["id"])
+                pending_gmaps_shares.append(payload)
+            except (TypeError, json.JSONDecodeError): continue
+        print(f"✅ Restored DB Data Successfully")
     finally: conn.close()
 
 def db_save_user(user_id, name, username, owner_name=None, owner_phone=None):
@@ -307,8 +361,7 @@ def db_save_user(user_id, name, username, owner_name=None, owner_phone=None):
             owner_name = COALESCE(excluded.owner_name, users.owner_name),
             owner_phone = COALESCE(excluded.owner_phone, users.owner_phone)
     """, (user_id, name, username, owner_name, owner_phone))
-    conn.commit()
-    conn.close()
+    conn.commit(); conn.close()
 
 def get_total_users_count():
     conn = _db_connect(DB_PATH)
@@ -388,26 +441,17 @@ def main_menu(user_id=None):
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def size_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🟢 ሙሉ ጭነት 100%", callback_data="size_100")],
-        [InlineKeyboardButton("🟡 ግማሽ ጭነት 50%", callback_data="size_50")],
-        [InlineKeyboardButton("🟠 እሩብ ጭነት 25%", callback_data="size_25")],
-    ])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🟢 ሙሉ ጭነት 100%", callback_data="size_100")], [InlineKeyboardButton("🟡 ግማሽ ጭነት 50%", callback_data="size_50")], [InlineKeyboardButton("🟠 እሩብ ጭነት 25%", callback_data="size_25")]])
 
 def vehicle_keyboard(prefix="vehicle"):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚛 ተሳቢ", callback_data=f"{prefix}_ተሳቢ")],
-        [InlineKeyboardButton("🚛 ካሶኒ", callback_data=f"{prefix}_ካሶኒ")],
-        [InlineKeyboardButton("🚛 ኦባማ", callback_data=f"{prefix}_ኦባማ")],
-        [InlineKeyboardButton("🚛 Isuzu", callback_data=f"{prefix}_isuzu")],
-        [InlineKeyboardButton("✍️ ሌላ", callback_data=f"{prefix}_other")],
-    ])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🚛 ተሳቢ", callback_data=f"{prefix}_ተሳቢ")], [InlineKeyboardButton("🚛 ካሶኒ", callback_data=f"{prefix}_ካሶኒ")], [InlineKeyboardButton("🚛 ኦባማ", callback_data=f"{prefix}_ኦባማ")], [InlineKeyboardButton("🚛 Isuzu", callback_data=f"{prefix}_isuzu")], [InlineKeyboardButton("✍️ ሌላ", callback_data=f"{prefix}_other")]])
 
 def calendar_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🇪🇹 የኢትዮጵያ ካላንደር (EC)", callback_data="cal_et")]])
 
-def route_choice_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🌍 በማንኛውም ቦታ", callback_data="route_anywhere")], [InlineKeyboardButton("📍 በርሶ ምርጫ", callback_data="route_custom")]])
+def phone_request_keyboard():
+    return ReplyKeyboardMarkup([[KeyboardButton("📱 ስልኬን አጋራ", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
+
 def is_user_registered(user_id):
     if user_id in users and users[user_id].get("owner", {}).get("phone"): return True
     conn = _db_connect(DB_PATH)
@@ -456,11 +500,7 @@ def is_broker(user_id):
     for b in brokers:
         if b.get("user_id") == user_id and b.get("approved") and b.get("active"): return True
     return False
-
-def phone_request_keyboard():
-    return ReplyKeyboardMarkup([[KeyboardButton("📱 ስልኬን አጋራ", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     context.user_data.clear()
     user = update.effective_user
@@ -522,6 +562,7 @@ async def start_phone_input(update, context):
         
     await update.message.reply_text("እናመሰግናለን ምዝገባዎን አጠናቀዋል ከታች ካሉት ምናሌዎች የፈለጉትን መጠቀም ይችላሉ።", reply_markup=main_menu(user.id))
     return ConversationHandler.END
+
 async def super_broadcast_start(update, context):
     if not is_super_admin(update.effective_user.id): return
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("ለሁሉም ደንበኞች", callback_data="broadcast_all")], [InlineKeyboardButton("ለደላሎች ብቻ", callback_data="broadcast_brokers")], [InlineKeyboardButton("ለአንድ ደንበኛ", callback_data="broadcast_one")]])
@@ -594,7 +635,7 @@ async def execute_broadcast(update, context):
     context.user_data.pop("broadcast_msg_text", None); context.user_data.pop("broadcast_photos", None); context.user_data.pop("broadcast_mode", None); context.user_data.pop("single_target_id", None)
     return ConversationHandler.END
 
-# CARGO
+# CARGO & TRUCK POSTING
 async def cargo_start(update, context):
     context.user_data.clear(); context.user_data["cargo"] = {}
     await update.message.reply_text("🚚 **ጭነት መለጠፍ**\n\n1️⃣ ጭነቱ የሚነሳበትን ቦታ ይጻፉ።", reply_markup=main_menu(update.effective_user.id))
@@ -682,7 +723,7 @@ async def cargo_price(update, context):
     conn.commit(); conn.close()
     await update.message.reply_text("✅ **ጭነትዎ በትክክል ተመዝግቧል!**", reply_markup=main_menu(update.effective_user.id))
     return ConversationHandler.END
-    async def truck_start(update, context):
+async def truck_start(update, context):
     context.user_data.clear(); context.user_data["truck"] = {}
     await update.message.reply_text("🚛 **የጭነት መኪና ማስመዝገብ**\n\n1️⃣ የመኪናውን አይነት ይጻፉ።", reply_markup=main_menu(update.effective_user.id))
     return TRUCK_TYPE
@@ -732,35 +773,29 @@ async def car_post_start(update, context):
     context.user_data.clear()
     await update.message.reply_text("🚗 **የሽያጭና/ኪራይ መኪና መለጠፍ**\n\nየሚለጥፉትን ዓይነት ይምረጡ፦", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚗 የኪራይ መኪና", callback_data="action_car_rent")], [InlineKeyboardButton("🚙 የሽያጭ መኪና", callback_data="action_car_sale")]]))
     return VEHICLE_LIST_TYPE
-
 async def vehicle_listing_type_action(update, context):
     query = update.callback_query; await query.answer()
     cat = "rental" if query.data == "action_car_rent" else "sale"
     context.user_data["vehicle_listing"] = {"category": cat, "photos": []}
     await query.edit_message_text("1️⃣ የመኪናውን አይነት/ሞዴል ይጻፉ።")
     return VEHICLE_LIST_LOCATION
-
 async def vehicle_listing_location(update, context):
     context.user_data["vehicle_listing"]["vehicle_type"] = update.message.text.strip()
     await update.message.reply_text("2️⃣ የመኪናውን ታርጋ ቁጥር ይጻፉ።")
     return VEHICLE_LIST_PLATE
-
 async def vehicle_listing_plate(update, context):
     context.user_data["vehicle_listing"]["plate"] = update.message.text.strip()
     await update.message.reply_text("3️⃣ መኪናው የሚገኝበትን ከተማ/ቦታ ይጻፉ።")
     return VEHICLE_LIST_DETAILS
-
 async def vehicle_listing_details(update, context):
     context.user_data["vehicle_listing"]["details"] = update.message.text.strip()
     await update.message.reply_text("4️⃣ ስለ መኪናው ተጨማሪ መረጃ ይጻፉ።")
     return VEHICLE_LIST_PRICE
-
 async def vehicle_listing_price(update, context):
     context.user_data["vehicle_listing"]["price"] = update.message.text.strip()
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("📷 ፎቶ የለኝም", callback_data="vehicle_photo_none")]])
     await update.message.reply_text("5️⃣ የመኪናውን 1 ወይም 2 ፎቶ ይላኩ።", reply_markup=kb)
     return VEHICLE_LIST_PHOTOS
-
 async def vehicle_listing_photo(update, context):
     photos = context.user_data["vehicle_listing"].setdefault("photos", [])
     if not update.message.photo: return VEHICLE_LIST_PHOTOS
@@ -769,20 +804,18 @@ async def vehicle_listing_photo(update, context):
         await update.message.reply_text("✅ 1ኛ ፎቶ ተቀብለናል። 2ኛ ፎቶ ይላኩ ወይም 'ፎቶ ጨርሻለሁ' ይጫኑ።", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ፎቶ ጨርሻለሁ", callback_data="vehicle_photo_done")]]))
         return VEHICLE_LIST_PHOTOS
     return await vehicle_listing_ask_price(update, context)
-
 async def vehicle_listing_photo_callback(update, context):
     await update.callback_query.answer()
     return await vehicle_listing_ask_price(update, context)
-
 async def vehicle_listing_ask_price(update, context):
     await update.effective_message.reply_text("6️⃣ የተሽከርካሪው ባለቤት ሙሉ ስም ይጻፉ።")
     return VEHICLE_LIST_OWNER
-
 async def vehicle_listing_owner(update, context):
     context.user_data["vehicle_listing"]["owner_name"] = update.message.text.strip()
     reg_phone = get_registered_phone(update.effective_user.id)
     await update.message.reply_text(f"7️⃣ 📞 የተመዘገበ ስልክ ቁጥርዎ፦ `{reg_phone}`\n✅ ይጫኑ ወይም አዲስ ይጻፉ።", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ ትክክል ነው", callback_data="phone_ok"), InlineKeyboardButton("✍️ ሌላ ስልክ", callback_data="phone_new")]]))
     return PHONE_CONFIRM
+
 async def find_cargo(update, context):
     active_cargos = [c for c in cargo_posts if c.get("active", True)]
     if not active_cargos: return await update.message.reply_text("📦 በአሁኑ ጊዜ ተስማሚ ጭነት የለም።", reply_markup=main_menu(update.effective_user.id))
@@ -821,7 +854,6 @@ async def find_vehicle_listings(update, context, category=None):
         buyer_kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"📩 ግንኙነት ጠይቅ", callback_data=f"vehiclebuyer_{rec['id']}")]])
         if photos: await context.bot.send_photo(update.effective_chat.id, photo=photos[0], caption=text_msg, reply_markup=buyer_kb)
         else: await context.bot.send_message(update.effective_chat.id, text_msg, reply_markup=buyer_kb)
-
 async def connection_request(update, context):
     query = update.callback_query; await query.answer()
     index = int(query.data.split("_")[1])
@@ -872,6 +904,7 @@ async def connect_type(update, context):
         try: await context.bot.send_message(admin_id, f"🔔 **አዲስ ግንኙነት ጥያቄ!**\n👤 ስም: {info['name']}\n📞 ስልክ: {info['phone']}")
         except: pass
     return ConversationHandler.END
+
 async def broker_start(update, context):
     context.user_data["broker"] = {"sectors": []}
     await update.message.reply_text("🤝 **የንግድ አጋር / ደላላ ምዝገባ**\n\nየሚሰሩባቸውን ዘርፎች ይምረጡ።", reply_markup=broker_sector_keyboard([]))
@@ -932,7 +965,6 @@ async def broker_address(update, context):
     await update.message.reply_text(f"✅ **ስለተመዘገቡ እናመሰግናለን!**\n\nዘርፎች: {', '.join(broker['sectors'])}\n📌 ማረጋገጫ ሲደረግ ይነገርዎታል።", reply_markup=main_menu(user.id))
     return ConversationHandler.END
 
-# TRACKING
 async def tracking_menu(update, context):
     context.user_data.clear()
     await update.message.reply_text("📍 **TANA CARGO — የጭነት ክትትል**\n\nአዲስ ክትትል ለመጀመር ወይም ለማቆም ይምረጡ።", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗺️ የጎግል መረጃ ለመላክ 👈", callback_data="tracking_share_gmaps")], [InlineKeyboardButton("🛑 ክትትል አቁም", callback_data="tracking_stop_request")]]))
@@ -942,17 +974,14 @@ async def tracking_share_gmaps_start(update, context):
     context.user_data["gmaps_share"] = {}
     await update.callback_query.message.reply_text("1️⃣ **የራስዎን አድራሻ** ይጻፉ።", reply_markup=ReplyKeyboardRemove())
     return TRACK_SHARE_ADDRESS
-
 async def tracking_share_address(update, context):
     context.user_data["gmaps_share"]["address"] = update.message.text.strip()
     await update.message.reply_text("2️⃣ **መረጃው የሚላክለት ሰው ስም** ይጻፉ።")
     return TRACK_SHARE_NAME
-
 async def tracking_share_name(update, context):
     context.user_data["gmaps_share"]["name"] = update.message.text.strip()
     await update.message.reply_text("3️⃣ **መረጃው የሚላክለት ሰው ስልክ ቁጥር** ይጻፉ።")
     return TRACK_SHARE_PHONE
-
 async def tracking_share_phone(update, context):
     is_valid, phone = validate_phone(update.message.text.strip())
     if not is_valid: await update.message.reply_text(f"❌ {phone}"); return TRACK_SHARE_PHONE
@@ -965,35 +994,16 @@ async def tracking_stop_start(update, context):
     context.user_data["tracking_stop"] = {}
     await update.callback_query.message.reply_text("1️⃣ **የሚከታተለው ሰው ስም** ይጻፉ።", reply_markup=ReplyKeyboardRemove())
     return TRACK_STOP_NAME
-
 async def tracking_stop_name(update, context):
     context.user_data["tracking_stop"]["name"] = update.message.text.strip()
     await update.message.reply_text("2️⃣ **ስልክ ቁጥር** ይጻፉ።")
     return TRACK_STOP_PHONE
-
 async def tracking_stop_phone(update, context):
     is_valid, phone = validate_phone(update.message.text.strip())
     if not is_valid: await update.message.reply_text(f"❌ {phone}"); return TRACK_STOP_PHONE
     info = context.user_data.pop("tracking_stop"); info.update({"phone": phone, "requester_id": update.effective_user.id})
     await update.message.reply_text("✅ ጥያቄው ለአድሚን ተልኳል።", reply_markup=main_menu(update.effective_user.id))
     return ConversationHandler.END
-
-# HEALTH & HTML
-def create_public_tracking_link(label="TANA CARGO", device_id=None):
-    token = secrets.token_urlsafe(24); device_id = str(device_id or TRACCAR_DEVICE_ID).strip()
-    conn = _db_connect(DB_PATH)
-    try:
-        conn.execute("INSERT INTO public_tracking_tokens (token, device_id, status, label, created_at) VALUES (?, ?, 'active', ?, ?)", (token, device_id, label, datetime.now().astimezone().isoformat(timespec="seconds")))
-        conn.commit()
-    finally: conn.close()
-    return token, f"{PUBLIC_BASE_URL}/track/{token}" if PUBLIC_BASE_URL else ""
-
-def get_public_tracking_token(token):
-    conn = _db_connect(DB_PATH); conn.row_factory = dict_row
-    try:
-        row = conn.execute("SELECT * FROM public_tracking_tokens WHERE token=? AND status='active'", (token,)).fetchone()
-        return dict(row) if row else None
-    finally: conn.close()
 
 class HealthHandler(BaseHTTPRequestHandler):
     def _send(self, status, content_type, body):
@@ -1020,10 +1030,6 @@ def start_health_server():
     port = int(os.getenv("PORT", "10000"))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-async def cancel(update, context):
-    context.user_data.clear()
-    await update.message.reply_text("❌ ሂደቱ ተሰርዟል።", reply_markup=main_menu(update.effective_user.id))
-    return ConversationHandler.END
 
 async def menu_router(update, context):
     text = update.message.text; uid = update.effective_user.id
@@ -1044,13 +1050,72 @@ async def menu_router(update, context):
     if text == "ℹ️ About": await about(update, context); return ConversationHandler.END
     return ConversationHandler.END
 
+async def profile(update, context):
+    user_id = update.effective_user.id
+    user = users.get(user_id, {"name": update.effective_user.full_name, "username": update.effective_user.username or "", "id": user_id})
+    message = f"👤 **የኔ መረጃ**\n\n👤 ስም፦ {user['name']}\n🔗 Username፦ @{user['username'] or 'የለም'}\n🆔 Telegram ID፦ {user['id']}\n\n👥 **ጠቅላላ ተጠቃሚዎች፦** {get_total_users_count():,}\n"
+    if "owner" in user: message += f"\n📦 የጭነት ባለቤት ምዝገባ፦ ✅\n👤 {user['owner'].get('name', 'N/A')}\n📞 {user['owner'].get('phone', 'N/A')}\n"
+    await update.message.reply_text(message, reply_markup=main_menu(user_id))
+
+async def support_start(update, context):
+    await update.message.reply_text(f"📞 TANA CARGO የጣና ጭነት እገዛ\n\nለእገዛ ለማግኘት @{SUPPORT_USERNAME} ይጠቀሙ።\n\n☎️ {SUPPORT_PHONE}\n\n🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።", reply_markup=main_menu(update.effective_user.id))
+    return ConversationHandler.END
+
+async def about(update, context):
+    await update.message.reply_text("🚚 **TANA CARGO & LOGISTICS**\n\nየጭነት ባለቤቶችንና የጭነት መኪና ባለቤቶችን ለማገናኘት የተዘጋጀ አገልግሎት ነው።\n\n🙏 እኛን ስለመረጡ እናመሰግናለን።", reply_markup=main_menu(update.effective_user.id))
+
+async def phone_confirm_callback(update, context):
+    query = update.callback_query; await query.answer()
+    if query.data == "phone_new":
+        await query.message.reply_text("📱 አዲሱን የራስዎን ስልክ ቁጥር ያጋሩ ወይም ይጻፉ።", reply_markup=phone_request_keyboard())
+        return PHONE_CONFIRM
+    phone = get_registered_phone(update.effective_user.id)
+    return await continue_after_phone_confirmation(update, context, phone)
+
+async def phone_confirm_input(update, context):
+    if update.message.contact:
+        phone = update.message.contact.phone_number
+        if phone.startswith("+251"): phone = "0" + phone[4:]
+        elif phone.startswith("251"): phone = "0" + phone[3:]
+    else:
+        phone = (update.message.text or "").strip().split("\n")[0].strip()
+    valid, error = validate_phone(phone)
+    if not valid: await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678"); return PHONE_CONFIRM
+    return await continue_after_phone_confirmation(update, context, phone)
+
+async def continue_after_phone_confirmation(update, context, phone):
+    target = context.user_data.pop("phone_confirm_target", "")
+    if target == "vehicle_listing":
+        listing = context.user_data.get("vehicle_listing", {})
+        listing["phone"] = phone
+        photo_status = listing.get("photo_status", "provided" if listing.get("photos") else "missing")
+        return await save_vehicle_listing(update, context, photo_status=photo_status)
+    return ConversationHandler.END
+
+async def save_vehicle_listing(update, context, photo_status):
+    listing = context.user_data.get("vehicle_listing", {})
+    uid = update.effective_user.id
+    conn = _db_connect(DB_PATH)
+    try:
+        cur = conn.execute("INSERT INTO vehicle_listings (user_id,category,vehicle_type,location,details,price,phone,photo_ids,photo_status,active,created_at,owner_name,plate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (uid, listing.get("category"), listing.get("vehicle_type"), listing.get("location", ""), listing.get("details", ""), listing.get("price", ""), listing.get("phone"), json.dumps(listing.get("photos", [])), photo_status, 1, datetime.now().astimezone().isoformat(timespec="seconds"), listing.get("owner_name"), listing.get("plate")))
+        conn.commit()
+    finally: conn.close()
+    await update.effective_message.reply_text("✅ መኪናዎ ተመዝግቧል!", reply_markup=main_menu(uid))
+    context.user_data.pop("vehicle_listing", None)
+    return ConversationHandler.END
+
+async def cancel(update, context):
+    context.user_data.clear()
+    await update.message.reply_text("❌ ሂደቱ ተሰርዟል።", reply_markup=main_menu(update.effective_user.id))
+    return ConversationHandler.END
+
 def main():
     if not TOKEN: raise RuntimeError("BOT_TOKEN missing")
     start_health_server()
     init_db()
+    load_persistent_data()
     
     application = Application.builder().token(TOKEN).concurrent_updates(True).build()
-    application.add_error_handler(error_handler)
     
     conv_handler = ConversationHandler(
         entry_points=[
@@ -1121,7 +1186,6 @@ def main():
     )
     application.add_handler(conv_handler)
     
-    # Background Job for Keep Alive (UptimeRobot)
     async def keep_alive_job(context):
         try:
             conn = _db_connect(DB_PATH)
@@ -1135,83 +1199,6 @@ def main():
         
     print("🚀 TANA CARGO Bot is running...")
     application.run_polling(drop_pending_updates=True)
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    print(f"TANA CARGO ERROR: {context.error}")
-
-async def profile(update, context):
-    user_id = update.effective_user.id
-    user = users.get(user_id, {"name": update.effective_user.full_name, "username": update.effective_user.username or "", "id": user_id})
-    message = f"👤 **የኔ መረጃ**\n\n👤 ስም፦ {user['name']}\n🔗 Username፦ @{user['username'] or 'የለም'}\n🆔 Telegram ID፦ {user['id']}\n\n👥 **ጠቅላላ ተጠቃሚዎች፦** {get_total_users_count():,}\n"
-    if "owner" in user: message += f"\n📦 የጭነት ባለቤት ምዝገባ፦ ✅\n👤 {user['owner'].get('name', 'N/A')}\n📞 {user['owner'].get('phone', 'N/A')}\n"
-    await update.message.reply_text(message, reply_markup=main_menu(user_id))
-
-async def support_start(update, context):
-    await update.message.reply_text(f"📞 TANA CARGO የጣና ጭነት እገዛ\n\nለእገዛ ለማግኘት @{SUPPORT_USERNAME} ይጠቀሙ።\n\n☎️ {SUPPORT_PHONE}\n\n🕐 24 ሰዓት / 7 ቀን በመስመር ላይ ነን።", reply_markup=main_menu(update.effective_user.id))
-    return ConversationHandler.END
-
-async def about(update, context):
-    await update.message.reply_text("🚚 **TANA CARGO & LOGISTICS**\n\nየጭነት ባለቤቶችንና የጭነት መኪና ባለቤቶችን ለማገናኘት የተዘጋጀ አገልግሎት ነው።\n\n🙏 እኛን ስለመረጡ እናመሰግናለን።", reply_markup=main_menu(update.effective_user.id))
-
-async def handle_rental_deeplink(update, context, share_token):
-    await update.message.reply_text("⚠️ ይህ ሊንክ ጊዜው አልፎበታል።")
-    return ConversationHandler.END
-
-async def phone_confirm_callback(update, context):
-    query = update.callback_query; await query.answer()
-    if query.data == "phone_new":
-        await query.message.reply_text("📱 አዲሱን የራስዎን ስልክ ቁጥር ያጋሩ ወይም ይጻፉ።", reply_markup=phone_request_keyboard())
-        return PHONE_CONFIRM
-    phone = get_registered_phone(update.effective_user.id)
-    return await continue_after_phone_confirmation(update, context, phone)
-
-async def phone_confirm_input(update, context):
-    if update.message.contact:
-        phone = update.message.contact.phone_number
-        if phone.startswith("+251"): phone = "0" + phone[4:]
-        elif phone.startswith("251"): phone = "0" + phone[3:]
-    else:
-        phone = (update.message.text or "").strip().split("\n")[0].strip()
-    valid, error = validate_phone(phone)
-    if not valid: await update.message.reply_text(f"❌ {error}\nምሳሌ፦ 0912345678"); return PHONE_CONFIRM
-    return await continue_after_phone_confirmation(update, context, phone)
-
-async def continue_after_phone_confirmation(update, context, phone):
-    target = context.user_data.pop("phone_confirm_target", "")
-    if target == "vehicle_listing":
-        listing = context.user_data.get("vehicle_listing", {})
-        listing["phone"] = phone
-        photo_status = listing.get("photo_status", "provided" if listing.get("photos") else "missing")
-        return await save_vehicle_listing(update, context, photo_status=photo_status)
-    return ConversationHandler.END
-
-async def save_vehicle_listing(update, context, photo_status):
-    listing = context.user_data.get("vehicle_listing", {})
-    uid = update.effective_user.id
-    conn = _db_connect(DB_PATH)
-    try:
-        cur = conn.execute("INSERT INTO vehicle_listings (user_id,category,vehicle_type,location,details,price,phone,photo_ids,photo_status,active,created_at,owner_name,plate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (uid, listing.get("category"), listing.get("vehicle_type"), listing.get("location", ""), listing.get("details", ""), listing.get("price", ""), listing.get("phone"), json.dumps(listing.get("photos", [])), photo_status, 1, datetime.now().astimezone().isoformat(timespec="seconds"), listing.get("owner_name"), listing.get("plate")))
-        conn.commit()
-    finally: conn.close()
-    await update.effective_message.reply_text("✅ መኪናዎ ተመዝግቧል!", reply_markup=main_menu(uid))
-    context.user_data.pop("vehicle_listing", None)
-    return ConversationHandler.END
-
-async def phone_confirm_callback(update, context):
-    q = update.callback_query; await q.answer()
-    if q.data == "phone_new":
-        await q.message.reply_text("📱 አዲሱን የራስዎን ስልክ ቁጥር ያጋሩ ወይም ይጻፉ።", reply_markup=phone_request_keyboard())
-        return PHONE_CONFIRM
-    phone = get_registered_phone(update.effective_user.id)
-    return await continue_after_phone_confirmation(update, context, phone)
-
-async def continue_after_phone_confirmation(update, context, phone):
-    target = context.user_data.pop("phone_confirm_target", "")
-    if target == "vehicle_listing":
-        listing = context.user_data.get("vehicle_listing", {})
-        listing["phone"] = phone
-        photo_status = listing.get("photo_status", "provided" if listing.get("photos") else "missing")
-        return await save_vehicle_listing(update, context, photo_status=photo_status)
-    return ConversationHandler.END
 
 if __name__ == "__main__":
     main()
